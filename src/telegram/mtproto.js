@@ -17,7 +17,8 @@ function loadGramJs() {
   const { TelegramClient, Api } = require('teleproto');
   const { StringSession } = require('teleproto/sessions/index.js');
   const { CustomFile } = require('teleproto/client/uploads.js');
-  return { TelegramClient, Api, StringSession, CustomFile };
+  const { generateRandomLong } = require('teleproto/Helpers.js');
+  return { TelegramClient, Api, StringSession, CustomFile, generateRandomLong };
 }
 
 export function mtprotoConfigured() {
@@ -144,7 +145,7 @@ export async function resolvePeer() {
  * Отправляет файл от имени аккаунта. Лимит — 2 ГБ (4 ГБ с Premium).
  * @returns {Promise<{messageId:number, method:'mtproto'}>}
  */
-export async function sendFileViaAccount({ filePath, fileName, size, caption, asDocument }) {
+export async function sendFileViaAccount({ filePath, fileName, size, caption, asDocument, topicId }) {
   if (size > MTPROTO_UPLOAD_LIMIT) {
     const err = new Error(`Файл больше ${humanSize(MTPROTO_UPLOAD_LIMIT)} — Telegram не примет`);
     err.code = 'TOO_LARGE';
@@ -162,7 +163,7 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, as
     forceDocument: asDocument ?? config.sendAsDocument,
     silent: true,
     workers: 4,
-    replyTo: config.topicId || undefined,
+    topMsgId: topicId || undefined,
     progressCallback: (progress) => {
       const now = Date.now();
       if (now - lastPrint < 1000) return;
@@ -173,6 +174,35 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, as
   process.stdout.write('\r\x1b[2K');
 
   return { messageId: msg.id, method: 'mtproto' };
+}
+
+/** Список существующих топиков форум-супергруппы: [{ id, title }]. */
+export async function listForumTopics(limit = 100) {
+  const { Api } = loadGramJs();
+  const c = await getClient();
+  const peer = await resolvePeer();
+  const res = await c.invoke(
+    new Api.messages.GetForumTopics({ peer, offsetDate: 0, offsetId: 0, offsetTopic: 0, limit }),
+  );
+  return (res.topics ?? [])
+    .filter((t) => t.title !== undefined)
+    .map((t) => ({ id: Number(t.id), title: String(t.title) }));
+}
+
+/** Создаёт топик от имени аккаунта (аккаунт должен быть админом с правом на темы). */
+export async function createForumTopicViaAccount(title) {
+  const { Api, generateRandomLong } = loadGramJs();
+  const c = await getClient();
+  const peer = await resolvePeer();
+  const updates = await c.invoke(
+    new Api.messages.CreateForumTopic({ peer, title, randomId: generateRandomLong() }),
+  );
+  // id топика — это id служебного сообщения о его создании.
+  for (const u of updates.updates ?? []) {
+    const id = u.message?.id ?? u.id;
+    if (id) return Number(id);
+  }
+  throw new Error(`Топик «${title}» создан, но Telegram не вернул его id`);
 }
 
 export async function whoAmI() {

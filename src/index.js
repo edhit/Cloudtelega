@@ -2,13 +2,18 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { config, ensureDirs, assertChat, BOT_UPLOAD_LIMIT } from './config.js';
+import { config, ensureDirs, assertChat, heicMode, pairPrefer, BOT_UPLOAD_LIMIT } from './config.js';
 import { log, humanSize } from './logger.js';
-import { closeDb, findByHash, listFailed, markFailed, markSent, resetFailed, stats, upsertPending } from './db.js';
+import {
+  closeDb, findByHash, findSentByStemName, listFailed, listTopics, markFailed, markSent,
+  resetFailed, stats, upsertPending,
+} from './db.js';
 import { sha256Cached } from './hash.js';
 import { scanAll, summarize } from './scanner.js';
+import { formatDate } from './dates.js';
 import { detectIosDevices, inspectMount, listMountPoints, mountHint } from './devices.js';
-import { buildJobs, sendJob } from './uploader.js';
+import { buildJobs, sendJob, stemOf } from './uploader.js';
+import { topicForFile } from './telegram/topics.js';
 import { botConfigured, getChat, getMe } from './telegram/botApi.js';
 import { canLogin, disconnect, login, mtprotoConfigured, whoAmI } from './telegram/mtproto.js';
 
@@ -40,6 +45,30 @@ process.on('SIGINT', () => {
   log.warn('Останавливаюсь после текущего файла… (ещё раз Ctrl+C — выход сразу)');
 });
 
+/* ── общее сканирование для scan/send ────────────────────────────────────── */
+
+async function collect(args) {
+  const roots = resolveRoots(args);
+  log.info(`Сканирую: ${roots.join(', ')}`);
+
+  const { files, dropped } = await scanAll(roots, {
+    since: parseSince(args.since),
+    prefer: pairPrefer(),
+    livePhotoVideos: config.livePhotoVideos,
+    onDateProgress: (done, total) => process.stdout.write(`\r  даты съёмки: ${done}/${total}`),
+  });
+  process.stdout.write('\r\x1b[2K');
+
+  const s = summarize(files);
+  log.ok(`К отправке ${s.count} файлов, ${humanSize(s.bytes)} (фото ${s.photos}, видео ${s.videos}, >50 МБ: ${s.big})`);
+  if (dropped.length) {
+    log.info(`Отсеяно как дубликаты по имени: ${dropped.length}`);
+    for (const d of dropped.slice(0, 5)) log.plain(`    ${d.file.name} — ${d.reason}`);
+    if (dropped.length > 5) log.plain(`    … ещё ${dropped.length - 5}`);
+  }
+  return { files, dropped, summary: s };
+}
+
 /* ── команды ─────────────────────────────────────────────────────────────── */
 
 async function cmdDevices() {
@@ -65,36 +94,32 @@ async function cmdDevices() {
 }
 
 async function cmdScan(args) {
-  const roots = resolveRoots(args);
-  log.info(`Сканирую: ${roots.join(', ')}`);
-  const files = await scanAll(roots, { since: parseSince(args.since) });
-  const s = summarize(files);
-
-  log.ok(`Найдено ${s.count} медиафайлов, ${humanSize(s.bytes)}`);
-  log.plain(`  фото: ${s.photos}, видео: ${s.videos}, больше 50 МБ: ${s.big}`);
-  for (const [ext, v] of s.byExt) {
+  const { summary } = await collect(args);
+  for (const [ext, v] of summary.byExt) {
     log.plain(`  ${ext.padEnd(6)} ${String(v.n).padStart(6)}  ${humanSize(v.bytes)}`);
   }
-  if (s.big > 0 && !mtprotoConfigured()) {
-    log.warn(`${s.big} файл(ов) больше 50 МБ — для них нужен вход в аккаунт: npm run login`);
+  log.plain('  по годам:');
+  for (const [year, n] of summary.byYear) log.plain(`    ${year}: ${n}`);
+  log.plain(`  источник даты: ${summary.bySource.map(([k, n]) => `${k}=${n}`).join(', ')}`);
+
+  if (summary.big > 0 && !mtprotoConfigured()) {
+    log.warn(`${summary.big} файл(ов) больше 50 МБ — для них нужен вход в аккаунт: npm run login`);
   }
-  return files;
 }
 
 async function cmdSend(args) {
   assertChat();
   ensureDirs();
 
-  const roots = resolveRoots(args);
   const dryRun = args['dry-run'] === 'true';
   const limit = args.limit ? Number(args.limit) : Infinity;
-
-  log.info(`Сканирую: ${roots.join(', ')}`);
-  const files = await scanAll(roots, { since: parseSince(args.since) });
-  const s = summarize(files);
-  log.ok(`Найдено ${s.count} файлов, ${humanSize(s.bytes)} (фото ${s.photos}, видео ${s.videos}, >50 МБ: ${s.big})`);
-
+  const { files } = await collect(args);
   if (!files.length) return;
+
+  log.info(
+    `Режим: ${config.sendAsDocument ? 'документы (без сжатия)' : 'лента (фото с превью)'}, ` +
+      `HEIC: ${heicMode()}, топики: ${config.topicMode === 'year' ? 'по годам' : 'нет'}`,
+  );
   if (dryRun) log.warn('Режим --dry-run: ничего не отправляю.');
 
   let sent = 0;
@@ -103,6 +128,8 @@ async function cmdSend(args) {
   let processed = 0;
   let bytesSent = 0;
 
+  const total = Math.min(files.length, limit === Infinity ? files.length : limit);
+
   for (const file of files) {
     if (stopRequested) break;
     if (processed >= limit) {
@@ -110,12 +137,22 @@ async function cmdSend(args) {
       break;
     }
     processed += 1;
+    const num = `${processed}/${total}`;
+    const when = formatDate(file.takenAt);
 
-    const num = `${processed}/${Math.min(files.length, limit === Infinity ? files.length : limit)}`;
+    // Тот же снимок в другом формате, отправленный в один из прошлых запусков.
+    if (config.crossRunNameCheck) {
+      const twin = findSentByStemName(stemOf(file.name), file.takenAt);
+      if (twin && twin.name.toLowerCase() !== file.name.toLowerCase()) {
+        duplicates += 1;
+        log.plain(`${num} ⏭  ${file.relPath} — тот же кадр, что ${twin.name} (msg ${twin.message_id})`);
+        continue;
+      }
+    }
 
     let sha256;
     try {
-      sha256 = await sha256Cached(file.absPath, file.size, file.mtime);
+      sha256 = await sha256Cached(file.absPath, file.size, file.mtime, file.name);
     } catch (err) {
       log.error(`${num} ${file.name}: не удалось прочитать (${err.message})`);
       failed += 1;
@@ -133,25 +170,31 @@ async function cmdSend(args) {
       continue;
     }
 
-    const record = { ...file, sha256 };
+    const record = { ...file, sha256, stemName: stemOf(file.name).toLowerCase() };
+
     if (dryRun) {
-      log.plain(`${num} →  ${file.relPath} (${humanSize(file.size)}, ${file.size > BOT_UPLOAD_LIMIT ? 'аккаунт' : 'бот'})`);
+      const via = file.size > BOT_UPLOAD_LIMIT ? 'аккаунт' : 'бот';
+      log.plain(`${num} →  ${when}  ${file.relPath} (${humanSize(file.size)}, ${via}, дата: ${file.dateSource})`);
       continue;
     }
 
     upsertPending(record);
 
     try {
-      const jobs = await buildJobs(record);
+      const topicId = await topicForFile(file);
+      const jobs = await buildJobs(record, topicId);
       let firstResult = null;
       for (const job of jobs) {
         const res = await sendJob(job);
         firstResult ??= res;
       }
-      markSent(sha256, { method: firstResult.method, chatId: config.chatId, messageId: firstResult.messageId });
+      markSent(sha256, { method: firstResult.method, chatId: config.chatId, topicId, messageId: firstResult.messageId });
       sent += 1;
       bytesSent += file.size;
-      log.ok(`${num} ✓ ${file.relPath} (${humanSize(file.size)}, ${firstResult.method}, msg ${firstResult.messageId})`);
+      log.ok(
+        `${num} ✓ ${when}  ${file.relPath} (${humanSize(file.size)}, ${firstResult.method}` +
+          `${topicId ? `, топик ${topicId}` : ''}, msg ${firstResult.messageId})`,
+      );
     } catch (err) {
       failed += 1;
       markFailed(sha256, err.message ?? err);
@@ -173,9 +216,19 @@ async function cmdStats() {
   for (const row of s.byStatus) {
     log.plain(`  ${row.status.padEnd(8)} ${String(row.n).padStart(6)}  ${humanSize(row.bytes)}`);
   }
-  for (const row of s.byMethod) {
-    log.plain(`  через ${row.method}: ${row.n}`);
+  for (const row of s.byMethod) log.plain(`  через ${row.method}: ${row.n}`);
+
+  if (s.byYear.length) {
+    log.plain('\nОтправлено по годам:');
+    for (const row of s.byYear) log.plain(`  ${row.year}: ${row.n} (${humanSize(row.bytes)})`);
   }
+
+  const topics = listTopics(config.chatId);
+  if (topics.length) {
+    log.plain('\nТопики:');
+    for (const t of topics) log.plain(`  ${t.title} → ${t.topic_id}`);
+  }
+
   const failed = listFailed(10);
   if (failed.length) {
     log.plain('\nПоследние ошибки:');
@@ -203,6 +256,10 @@ async function cmdLogin() {
 async function cmdCheck() {
   log.info(`База: ${config.dbPath}`);
   log.info(`Чат: ${config.chatId || '— не задан —'}${config.topicId ? ` (топик ${config.topicId})` : ''}`);
+  log.info(
+    `Режим отправки: ${config.sendAsDocument ? 'документы' : 'лента (фото)'}, ` +
+      `HEIC: ${heicMode()}, пары: ${pairPrefer()}, Live Photo: ${config.livePhotoVideos}`,
+  );
 
   if (botConfigured()) {
     try {
@@ -210,7 +267,10 @@ async function cmdCheck() {
       log.ok(`Бот: @${me.username}`);
       if (config.chatId) {
         const chat = await getChat();
-        log.ok(`Чат: ${chat.title ?? chat.username ?? chat.id} (${chat.type})`);
+        log.ok(`Чат: ${chat.title ?? chat.username ?? chat.id} (${chat.type}${chat.is_forum ? ', форум' : ''})`);
+        if (config.topicMode === 'year' && !chat.is_forum) {
+          log.error('TOPIC_MODE=year, но в чате не включены темы. Нужна супергруппа с включённым форумом.');
+        }
       }
     } catch (err) {
       log.error(`Бот: ${err.message}`);
@@ -230,10 +290,7 @@ async function cmdCheck() {
     log.warn('Аккаунт не подключён — файлы больше 50 МБ отправить не получится (npm run login).');
   }
 
-  const roots = config.scanPaths;
-  for (const r of roots) {
-    log.plain(`  ${fs.existsSync(r) ? '✓' : '✗'} ${r}`);
-  }
+  for (const r of config.scanPaths) log.plain(`  ${fs.existsSync(expand(r)) ? '✓' : '✗'} ${r}`);
 }
 
 /* ── вспомогательное ─────────────────────────────────────────────────────── */
@@ -258,16 +315,16 @@ function usage() {
 cloudtelega — Telegram как облачное хранилище для фото и видео
 
   npm run devices                  список дисков и iPhone, подсказки по монтированию
-  npm run start -- check           проверить .env, бота, аккаунт и каталоги
+  npm run start -- check           проверить .env, бота, аккаунт, чат и каталоги
   npm run start -- login           вход в аккаунт (нужен для файлов > 50 МБ)
-  npm run start -- scan  [опции]   только посчитать, что лежит на диске
+  npm run start -- scan  [опции]   что лежит на диске: форматы, годы, источники дат
   npm run start -- send  [опции]   отправить всё новое в канал/группу
   npm run start -- stats           статистика по базе отправленного
   npm run start -- retry           повторить файлы, упавшие с ошибкой
 
 Опции:
   --path=/Volumes/USB      каталог для сканирования (можно повторять)
-  --since=2024-01-01       только файлы новее указанной даты
+  --since=2024-01-01       только файлы, снятые позже указанной даты
   --limit=100              обработать не больше N файлов за запуск
   --dry-run                показать план, ничего не отправляя
 `);

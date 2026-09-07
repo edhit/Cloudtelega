@@ -35,9 +35,27 @@ export const config = {
   dbPath: path.resolve(process.env.DB_PATH || './data/cloudtelega.db'),
   tmpDir: path.resolve(process.env.TMP_DIR || './tmp'),
 
-  heicMode: (process.env.HEIC_MODE || 'document').toLowerCase(),
+  // auto: в режиме ленты HEIC конвертируется в JPEG, в режиме документов уходит оригинал
+  heicMode: (process.env.HEIC_MODE || 'auto').toLowerCase(),
   heicQuality: int(process.env.HEIC_JPEG_QUALITY, 92),
-  sendAsDocument: bool(process.env.SEND_AS_DOCUMENT, true),
+  // false — отправлять фото/видео лентой (с превью), true — документами (без сжатия)
+  sendAsDocument: bool(process.env.SEND_AS_DOCUMENT, false),
+  // Оставлять ли оригинал HEIC рядом с JPEG-версией в режиме ленты
+  keepHeicOriginal: bool(process.env.KEEP_HEIC_ORIGINAL, false),
+
+  // none — всё в одну ленту; year — раскладывать по топикам-годам (нужна форум-супергруппа)
+  topicMode: (process.env.TOPIC_MODE || 'none').toLowerCase(),
+
+  // Какой формат считать главным, если рядом лежат IMG_0001.HEIC и IMG_0001.JPG
+  // auto — jpeg в режиме ленты, original в режиме документов
+  pairPrefer: (process.env.PAIR_PREFER || 'auto').toLowerCase(),
+  // .MOV рядом с фото того же имени — это Live Photo
+  livePhotoVideos: (process.env.LIVE_PHOTO_VIDEOS || 'skip').toLowerCase(),
+  // Искать готовый хеш по имени+размеру+mtime — чтобы повторное подключение диска
+  // с другой точкой монтирования не перечитывало весь диск заново
+  fastRemountMatch: bool(process.env.FAST_REMOUNT_MATCH, true),
+  // Проверять «то же имя + та же дата съёмки» по базе прошлых запусков
+  crossRunNameCheck: bool(process.env.CROSS_RUN_NAME_CHECK, true),
 
   sendDelayMs: int(process.env.SEND_DELAY_MS, 1200),
   maxAttempts: int(process.env.MAX_ATTEMPTS, 3),
@@ -47,6 +65,21 @@ export const config = {
 export const BOT_UPLOAD_LIMIT = 50 * 1024 * 1024;
 // MTProto: 2 ГБ для обычного аккаунта, 4 ГБ для Premium.
 export const MTPROTO_UPLOAD_LIMIT = 2000 * 1024 * 1024;
+// Telegram принимает как «фото» (с превью в ленте) файлы не больше 10 МБ.
+export const PHOTO_LIMIT = 10 * 1024 * 1024;
+
+/** Эффективный режим HEIC с учётом heicMode=auto. */
+export function heicMode() {
+  if (config.heicMode !== 'auto') return config.heicMode;
+  if (config.sendAsDocument) return 'document';
+  return config.keepHeicOriginal ? 'both' : 'convert';
+}
+
+/** Какой формат предпочесть в паре HEIC+JPG с учётом pairPrefer=auto. */
+export function pairPrefer() {
+  if (config.pairPrefer !== 'auto') return config.pairPrefer;
+  return config.sendAsDocument ? 'original' : 'jpeg';
+}
 
 export function ensureDirs() {
   fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });

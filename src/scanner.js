@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { isMedia, kindOf, extOf } from './media.js';
+import { isMedia, kindOf, extOf, PHOTO_EXT, VIDEO_EXT } from './media.js';
+import { detectCaptureDate } from './dates.js';
 
 // Служебные каталоги, которые встречаются на USB-дисках и на iPhone.
 const SKIP_DIRS = new Set([
@@ -11,17 +12,28 @@ const SKIP_DIRS = new Set([
 
 const SKIP_FILE_PREFIXES = ['._', '.DS_Store'];
 
+// Чем «оригинальнее» формат, тем раньше он в списке.
+const PREFER_ORIGINAL = ['.dng', '.cr3', '.cr2', '.nef', '.arw', '.orf', '.rw2', '.raw',
+  '.heic', '.heif', '.tif', '.tiff', '.png', '.webp', '.avif', '.jpg', '.jpeg', '.gif', '.bmp'];
+// Чем удобнее для ленты (не требует конвертации), тем раньше.
+const PREFER_JPEG = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.avif', '.tif', '.tiff',
+  '.dng', '.cr3', '.cr2', '.nef', '.arw', '.orf', '.rw2', '.raw', '.gif', '.bmp'];
+const PREFER_VIDEO = ['.mov', '.mp4', '.m4v', '.hevc', '.mkv', '.avi', '.webm', '.mpg', '.mpeg', '.3gp', '.mts', '.wmv'];
+
 function isSkippedName(name) {
   return SKIP_FILE_PREFIXES.some((p) => name.startsWith(p));
 }
 
-/**
- * Рекурсивно обходит каталог и возвращает список медиафайлов.
- * @param {string} root
- * @param {{minSize?:number, since?:number, onProgress?:(n:number)=>void}} opts
- */
+/** Ключ группировки «одно и то же фото в разных форматах»: каталог + имя без расширения. */
+export function stemKey(absPath) {
+  const dir = path.dirname(absPath);
+  const stem = path.basename(absPath, path.extname(absPath));
+  return `${dir}::${stem.toLowerCase()}`;
+}
+
+/** Рекурсивный обход каталога: только медиафайлы, со stat. */
 export async function scanDir(root, opts = {}) {
-  const { minSize = 1, since = 0, onProgress } = opts;
+  const { minSize = 1, onProgress } = opts;
   const results = [];
   const stack = [root];
   let seen = 0;
@@ -31,7 +43,7 @@ export async function scanDir(root, opts = {}) {
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch (err) {
+    } catch {
       // Нет прав / устройство отключилось — идём дальше, не роняем обход.
       continue;
     }
@@ -44,10 +56,8 @@ export async function scanDir(root, opts = {}) {
         stack.push(full);
         continue;
       }
-      if (entry.isSymbolicLink()) continue;
-      if (!entry.isFile()) continue;
-      if (isSkippedName(entry.name)) continue;
-      if (!isMedia(entry.name)) continue;
+      if (entry.isSymbolicLink() || !entry.isFile()) continue;
+      if (isSkippedName(entry.name) || !isMedia(entry.name)) continue;
 
       let st;
       try {
@@ -56,17 +66,17 @@ export async function scanDir(root, opts = {}) {
         continue;
       }
       if (st.size < minSize) continue;
-      const mtime = Math.floor(st.mtimeMs);
-      if (since && mtime < since) continue;
 
       results.push({
         absPath: full,
         relPath: path.relative(root, full),
         name: entry.name,
         size: st.size,
-        mtime,
+        mtime: Math.floor(st.mtimeMs),
         ext: extOf(entry.name),
         kind: kindOf(entry.name),
+        stemKey: stemKey(full),
+        stat: st,
         root,
       });
 
@@ -78,28 +88,115 @@ export async function scanDir(root, opts = {}) {
   return results;
 }
 
-/** Сканирует несколько корней и отдаёт единый список, отсортированный по дате съёмки (mtime). */
+/** Определяет дату съёмки каждого файла (EXIF / атомы видео / имя / файловая система). */
+export async function enrichWithDates(files, onProgress) {
+  let done = 0;
+  for (const f of files) {
+    const { takenAt, source } = await detectCaptureDate(f.absPath, f.stat);
+    f.takenAt = takenAt;
+    f.dateSource = source;
+    delete f.stat;
+    done += 1;
+    if (onProgress && done % 100 === 0) onProgress(done, files.length);
+  }
+  return files;
+}
+
+function pickBest(candidates, order) {
+  return [...candidates].sort((a, b) => {
+    const ia = order.indexOf(a.ext);
+    const ib = order.indexOf(b.ext);
+    const ra = ia === -1 ? order.length : ia;
+    const rb = ib === -1 ? order.length : ib;
+    if (ra !== rb) return ra - rb;
+    return b.size - a.size; // при равном приоритете берём более «полный» файл
+  })[0];
+}
+
+/**
+ * Схлопывает файлы с одинаковым именем в одном каталоге (IMG_0001.HEIC + IMG_0001.JPG).
+ * @param {object[]} files
+ * @param {{prefer:'original'|'jpeg', livePhotoVideos:'skip'|'send'}} opts
+ * @returns {{files:object[], dropped:{file:object, reason:string}[]}}
+ */
+export function collapseDuplicatesByName(files, opts) {
+  const { prefer = 'original', livePhotoVideos = 'skip' } = opts ?? {};
+  const photoOrder = prefer === 'jpeg' ? PREFER_JPEG : PREFER_ORIGINAL;
+
+  const groups = new Map();
+  for (const f of files) {
+    const g = groups.get(f.stemKey) ?? [];
+    g.push(f);
+    groups.set(f.stemKey, g);
+  }
+
+  const kept = [];
+  const dropped = [];
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      kept.push(group[0]);
+      continue;
+    }
+
+    const photos = group.filter((f) => PHOTO_EXT.has(f.ext));
+    const videos = group.filter((f) => VIDEO_EXT.has(f.ext));
+
+    let bestPhoto = null;
+    if (photos.length) {
+      bestPhoto = pickBest(photos, photoOrder);
+      kept.push(bestPhoto);
+      for (const f of photos) {
+        if (f !== bestPhoto) dropped.push({ file: f, reason: `то же фото, что ${bestPhoto.name}` });
+      }
+    }
+
+    if (videos.length) {
+      if (bestPhoto && livePhotoVideos === 'skip') {
+        // .MOV рядом с фото того же имени — это Live Photo, отдельного смысла не имеет.
+        for (const f of videos) dropped.push({ file: f, reason: `Live Photo к ${bestPhoto.name}` });
+      } else {
+        const bestVideo = pickBest(videos, PREFER_VIDEO);
+        kept.push(bestVideo);
+        for (const f of videos) {
+          if (f !== bestVideo) dropped.push({ file: f, reason: `то же видео, что ${bestVideo.name}` });
+        }
+      }
+    }
+  }
+
+  return { files: kept, dropped };
+}
+
+/** Сканирует несколько корней, проставляет даты, схлопывает дубликаты и сортирует по дате съёмки. */
 export async function scanAll(roots, opts = {}) {
+  const { since = 0, onDateProgress, prefer, livePhotoVideos } = opts;
   const all = [];
+
   for (const root of roots) {
     try {
       const st = await fs.stat(root);
-      if (!st.isDirectory()) {
-        continue;
-      }
+      if (!st.isDirectory()) continue;
     } catch {
       throw new Error(`Каталог недоступен: ${root}`);
     }
-    const files = await scanDir(root, opts);
-    all.push(...files);
+    all.push(...(await scanDir(root, opts)));
   }
-  // «По порядку» = хронологически, от старых к новым.
-  all.sort((a, b) => a.mtime - b.mtime || a.absPath.localeCompare(b.absPath));
-  return all;
+
+  await enrichWithDates(all, onDateProgress);
+
+  const filtered = since ? all.filter((f) => f.takenAt >= since) : all;
+  const { files, dropped } = collapseDuplicatesByName(filtered, { prefer, livePhotoVideos });
+
+  // «По порядку» = по дате съёмки, от старых к новым.
+  files.sort((a, b) => a.takenAt - b.takenAt || a.absPath.localeCompare(b.absPath));
+  return { files, dropped };
 }
 
 export function summarize(files) {
   const byExt = new Map();
+  const byYear = new Map();
+  const bySource = new Map();
   let bytes = 0;
   let photos = 0;
   let videos = 0;
@@ -110,10 +207,15 @@ export function summarize(files) {
     if (f.kind === 'video') videos += 1;
     else photos += 1;
     if (f.size > 50 * 1024 * 1024) big += 1;
-    const cur = byExt.get(f.ext) ?? { n: 0, bytes: 0 };
-    cur.n += 1;
-    cur.bytes += f.size;
-    byExt.set(f.ext, cur);
+
+    const ext = byExt.get(f.ext) ?? { n: 0, bytes: 0 };
+    ext.n += 1;
+    ext.bytes += f.size;
+    byExt.set(f.ext, ext);
+
+    const year = String(new Date(f.takenAt ?? f.mtime).getFullYear());
+    byYear.set(year, (byYear.get(year) ?? 0) + 1);
+    bySource.set(f.dateSource ?? 'fs', (bySource.get(f.dateSource ?? 'fs') ?? 0) + 1);
   }
 
   return {
@@ -123,5 +225,7 @@ export function summarize(files) {
     videos,
     big,
     byExt: [...byExt.entries()].sort((a, b) => b[1].n - a[1].n),
+    byYear: [...byYear.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+    bySource: [...bySource.entries()].sort((a, b) => b[1] - a[1]),
   };
 }

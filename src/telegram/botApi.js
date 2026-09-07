@@ -72,10 +72,11 @@ export async function getChat(chatId = config.chatId) {
 }
 
 /**
- * Отправляет файл через Bot API. Лимит — 50 МБ (или 2000 МБ на своём Bot API server).
+ * Отправляет файл через Bot API. Лимит — 50 МБ (или 2000 МБ на своём Bot API server),
+ * а для «фото с превью» — 10 МБ.
  * @returns {Promise<{messageId:number, method:'bot'}>}
  */
-export async function sendFileViaBot({ filePath, fileName, size, mime, caption, kind, asDocument }) {
+export async function sendFileViaBot({ filePath, fileName, size, mime, caption, kind, asDocument, topicId }) {
   if (config.botApiRoot === 'https://api.telegram.org' && size > BOT_UPLOAD_LIMIT) {
     const err = new Error('Файл больше 50 МБ — Bot API не примет');
     err.code = 'TOO_LARGE';
@@ -88,14 +89,25 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
 
   const form = new FormData();
   form.append('chat_id', String(config.chatId));
-  if (config.topicId) form.append('message_thread_id', String(config.topicId));
+  if (topicId) form.append('message_thread_id', String(topicId));
   if (caption) form.append('caption', caption.slice(0, 1024));
   form.append('disable_notification', 'true');
   if (useDocument) form.append('disable_content_type_detection', 'true');
+  if (method === 'sendVideo') form.append('supports_streaming', 'true');
 
   const blob = await openAsBlob(filePath, { type: mime });
   form.append(field, blob, fileName);
 
   const result = await call(method, form);
   return { messageId: result.message_id, method: 'bot' };
+}
+
+/**
+ * Создаёт топик в форум-супергруппе. Бот должен быть админом с правом
+ * «Управление темами» (can_manage_topics).
+ * @returns {Promise<number>} message_thread_id
+ */
+export async function createForumTopicViaBot(title) {
+  const result = await call('createForumTopic', { chat_id: config.chatId, name: title });
+  return result.message_thread_id;
 }

@@ -10,12 +10,20 @@ export async function sha256File(absPath) {
   return hash.digest('hex');
 }
 
-/** sha256 с кэшем по (path, size, mtime) — повторные запуски не перечитывают диск. */
-export async function sha256Cached(absPath, size, mtime) {
-  const cached = getCachedHash(absPath, size, mtime);
-  if (cached) return cached;
+/**
+ * sha256 с кэшем по (путь, размер, mtime) и по «личности» файла (имя, размер, mtime).
+ * Второе нужно, когда тот же диск смонтирован по другому пути — иначе повторное
+ * подключение заставило бы перечитать все терабайты заново.
+ */
+export async function sha256Cached(absPath, size, mtime, name) {
+  const cached = getCachedHash(absPath, size, mtime, name);
+  if (cached) {
+    // Запоминаем и новый путь, чтобы дальше попадать в кэш по нему напрямую.
+    putCachedHash(absPath, size, mtime, cached, name);
+    return cached;
+  }
   const digest = await sha256File(absPath);
-  putCachedHash(absPath, size, mtime, digest);
+  putCachedHash(absPath, size, mtime, digest, name);
   return digest;
 }
 
