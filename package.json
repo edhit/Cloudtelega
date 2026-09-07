@@ -1,0 +1,28 @@
+{
+  "name": "cloudtelega",
+  "version": "1.0.0",
+  "description": "Telegram как облачное хранилище для фото и видео с iPhone / внешнего диска",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "cloudtelega": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "devices": "node src/index.js devices",
+    "scan": "node src/index.js scan",
+    "send": "node src/index.js send",
+    "login": "node src/index.js login",
+    "stats": "node src/index.js stats"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
+    "heic-convert": "^2.1.0",
+    "teleproto": "^1.229.0"
+  },
+  "license": "MIT"
+}
