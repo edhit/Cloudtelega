@@ -1,10 +1,13 @@
 import path from 'node:path';
-import { config, heicMode, BOT_UPLOAD_LIMIT, PHOTO_LIMIT } from './config.js';
+import { config, heicMode, livePhotoMode, BOT_UPLOAD_LIMIT, PHOTO_LIMIT } from './config.js';
 import { log, humanSize } from './logger.js';
 import { formatDate } from './dates.js';
 import { convertHeicToJpeg, isHeic, mimeOf, safeUnlink } from './media.js';
-import { botConfigured, sendFileViaBot } from './telegram/botApi.js';
+import { botConfigured, sendFileViaBot, sendLivePhotoViaBot } from './telegram/botApi.js';
 import { mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
+
+// Кадр Live Photo Telegram принимает только как обычное фото.
+const STILL_OK = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
 /**
  * Подпись к сообщению. Дата съёмки идёт первой строкой: порядок в ленте
@@ -30,30 +33,33 @@ function photoTooBigForFeed(size, kind) {
   return kind === 'photo' && size > PHOTO_LIMIT;
 }
 
-/**
- * Готовит список «посылок» для одного исходного файла.
- * HEIC может дать две: JPEG для ленты и оригинал для архива — зависит от HEIC_MODE.
- */
-export async function buildJobs(file, topicId) {
-  const jobs = [];
+function originalJob(file, caption, topicId, { forceDocument = false } = {}) {
   const heic = isHeic(file.name);
-  const mode = heic ? heicMode() : 'document';
-  const caption = buildCaption(file);
-
-  const original = () => ({
+  return {
     filePath: file.absPath,
     fileName: file.name,
     size: file.size,
     mime: mimeOf(file.name),
     kind: file.kind,
-    // HEIC Telegram как фото не покажет, оригиналы RAW тоже — они всегда документом
-    asDocument: heic ? true : config.sendAsDocument || photoTooBigForFeed(file.size, file.kind),
+    // HEIC и RAW Telegram как фото не покажет — они всегда документом
+    asDocument: forceDocument || heic || config.sendAsDocument || photoTooBigForFeed(file.size, file.kind),
     caption,
     topicId,
     temporary: false,
-  });
+  };
+}
 
-  if (!heic || mode === 'document' || mode === 'both') jobs.push(original());
+/**
+ * Готовит «посылки» для обычного файла (без пары Live Photo).
+ * HEIC может дать две: JPEG для ленты и оригинал для архива — зависит от HEIC_MODE.
+ */
+async function buildPlainJobs(file, topicId) {
+  const jobs = [];
+  const heic = isHeic(file.name);
+  const mode = heic ? heicMode() : 'document';
+  const caption = buildCaption(file);
+
+  if (!heic || mode === 'document' || mode === 'both') jobs.push(originalJob(file, caption, topicId));
 
   if (heic && (mode === 'convert' || mode === 'both')) {
     let jpeg;
@@ -62,7 +68,7 @@ export async function buildJobs(file, topicId) {
     } catch (err) {
       // Битый или нестандартный HEIC — не теряем файл, отправляем оригинал как есть.
       log.warn(`${file.name}: не удалось сконвертировать в JPEG (${err.message}), отправляю оригинал`);
-      if (!jobs.length) jobs.push(original());
+      if (!jobs.length) jobs.push(originalJob(file, caption, topicId));
       return jobs;
     }
     jobs.push({
@@ -79,6 +85,79 @@ export async function buildJobs(file, topicId) {
   }
 
   return jobs;
+}
+
+/** Кадр для Live Photo: готовый JPEG/PNG или сконвертированный из HEIC. */
+async function makeStill(file) {
+  if (STILL_OK.has(file.ext)) {
+    return { filePath: file.absPath, fileName: file.name, size: file.size, mime: mimeOf(file.name), temporary: false };
+  }
+  if (!isHeic(file.name)) return null; // RAW и прочее кадром Live Photo быть не может
+
+  try {
+    const jpeg = await convertHeicToJpeg(file.absPath);
+    return { filePath: jpeg.path, fileName: jpeg.name, size: jpeg.size, mime: 'image/jpeg', temporary: true };
+  } catch (err) {
+    log.warn(`${file.name}: не удалось сконвертировать кадр Live Photo (${err.message})`);
+    return null;
+  }
+}
+
+/** Фото + короткое видео рядом = Live Photo (sendLivePhoto, Bot API 10.0). */
+async function buildLiveJobs(file, topicId) {
+  const live = file.livePhoto;
+  const caption = buildCaption(file);
+  const mode = livePhotoMode();
+
+  if (mode === 'live' && botConfigured()) {
+    const still = await makeStill(file);
+    const fits = still && still.size <= PHOTO_LIMIT && live.size <= BOT_UPLOAD_LIMIT;
+
+    if (fits) {
+      const jobs = [
+        {
+          type: 'livePhoto',
+          ...still,
+          kind: 'photo',
+          videoPath: live.absPath,
+          videoName: live.name,
+          videoSize: live.size,
+          videoMime: mimeOf(live.name),
+          caption,
+          topicId,
+          companion: live,
+        },
+      ];
+      // В режиме both оригинал HEIC всё равно кладём в архив отдельным документом.
+      if (isHeic(file.name) && heicMode() === 'both') {
+        jobs.push(originalJob(file, `${caption}\n(оригинал HEIC)`, topicId, { forceDocument: true }));
+      }
+      return jobs;
+    }
+    if (still?.temporary) await safeUnlink(still.filePath);
+    log.warn(`${file.name}: пара не подходит для Live Photo (кадр ${humanSize(still?.size ?? file.size)}, видео ${humanSize(live.size)}) — шлю раздельно`);
+  }
+
+  const jobs = await buildPlainJobs(file, topicId);
+  if (mode !== 'skip') {
+    jobs.push({
+      filePath: live.absPath,
+      fileName: live.name,
+      size: live.size,
+      mime: mimeOf(live.name),
+      kind: 'video',
+      asDocument: config.sendAsDocument,
+      caption: `${caption}\n(видео Live Photo)`,
+      topicId,
+      companion: live,
+      temporary: false,
+    });
+  }
+  return jobs;
+}
+
+export async function buildJobs(file, topicId) {
+  return file.livePhoto ? buildLiveJobs(file, topicId) : buildPlainJobs(file, topicId);
 }
 
 /** Выбирает транспорт: до 50 МБ — бот, крупнее — аккаунт (MTProto). */
@@ -118,9 +197,32 @@ async function deliver(job) {
   return sendFileViaAccount(job);
 }
 
+/** Live Photo одним сообщением; если не вышло — кадр и видео по отдельности. */
+async function deliverLivePhoto(job) {
+  try {
+    return await sendLivePhotoViaBot(job);
+  } catch (err) {
+    log.warn(`${job.fileName}: Live Photo не отправился (${err.message}), шлю кадр и видео отдельно`);
+    const still = await deliver({ ...job, asDocument: false });
+    await deliver({
+      filePath: job.videoPath,
+      fileName: job.videoName,
+      size: job.videoSize,
+      mime: job.videoMime,
+      kind: 'video',
+      asDocument: config.sendAsDocument,
+      caption: `${job.caption}\n(видео Live Photo)`,
+      topicId: job.topicId,
+    });
+    return still;
+  }
+}
+
 /** Отправляет одну «посылку» и возвращает { messageId, method }. */
 export async function sendJob(job) {
   try {
+    if (job.type === 'livePhoto') return await deliverLivePhoto(job);
+
     try {
       return await deliver(job);
     } catch (err) {

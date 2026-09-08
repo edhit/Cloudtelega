@@ -103,6 +103,25 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
 }
 
 /**
+ * Отправляет Live Photo одним сообщением: статичный кадр + короткое видео.
+ * Метод sendLivePhoto появился в Bot API 10.0 (апрель 2026).
+ * @returns {Promise<{messageId:number, method:'bot'}>}
+ */
+export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath, videoName, videoMime, caption, topicId }) {
+  const form = new FormData();
+  form.append('chat_id', String(config.chatId));
+  if (topicId) form.append('message_thread_id', String(topicId));
+  if (caption) form.append('caption', caption.slice(0, 1024));
+  form.append('disable_notification', 'true');
+
+  form.append('photo', await openAsBlob(filePath, { type: mime }), fileName);
+  form.append('live_photo', await openAsBlob(videoPath, { type: videoMime ?? 'video/quicktime' }), videoName);
+
+  const result = await call('sendLivePhoto', form, { retries: 1 });
+  return { messageId: result.message_id, method: 'bot' };
+}
+
+/**
  * Создаёт топик в форум-супергруппе. Бот должен быть админом с правом
  * «Управление темами» (can_manage_topics).
  * @returns {Promise<number>} message_thread_id

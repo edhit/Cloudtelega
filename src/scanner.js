@@ -113,14 +113,17 @@ function pickBest(candidates, order) {
   })[0];
 }
 
+// Видео Live Photo длится пару секунд; всё, что заметно больше, — самостоятельный ролик.
+const LIVE_PHOTO_MAX_BYTES = 50 * 1024 * 1024;
+
 /**
  * Схлопывает файлы с одинаковым именем в одном каталоге (IMG_0001.HEIC + IMG_0001.JPG).
  * @param {object[]} files
- * @param {{prefer:'original'|'jpeg', livePhotoVideos:'skip'|'send'}} opts
+ * @param {{prefer:'original'|'jpeg', livePhotoVideos:'live'|'skip'|'send'}} opts
  * @returns {{files:object[], dropped:{file:object, reason:string}[]}}
  */
 export function collapseDuplicatesByName(files, opts) {
-  const { prefer = 'original', livePhotoVideos = 'skip' } = opts ?? {};
+  const { prefer = 'original', livePhotoVideos = 'live' } = opts ?? {};
   const photoOrder = prefer === 'jpeg' ? PREFER_JPEG : PREFER_ORIGINAL;
 
   const groups = new Map();
@@ -152,11 +155,18 @@ export function collapseDuplicatesByName(files, opts) {
     }
 
     if (videos.length) {
-      if (bestPhoto && livePhotoVideos === 'skip') {
-        // .MOV рядом с фото того же имени — это Live Photo, отдельного смысла не имеет.
+      const bestVideo = pickBest(videos, PREFER_VIDEO);
+      const isLivePhoto = Boolean(bestPhoto) && bestVideo.size <= LIVE_PHOTO_MAX_BYTES;
+
+      if (isLivePhoto && livePhotoVideos === 'live') {
+        // .MOV рядом с фото того же имени — это Live Photo: отправим их одним сообщением.
+        bestPhoto.livePhoto = bestVideo;
+        for (const f of videos) {
+          if (f !== bestVideo) dropped.push({ file: f, reason: `то же видео, что ${bestVideo.name}` });
+        }
+      } else if (isLivePhoto && livePhotoVideos === 'skip') {
         for (const f of videos) dropped.push({ file: f, reason: `Live Photo к ${bestPhoto.name}` });
       } else {
-        const bestVideo = pickBest(videos, PREFER_VIDEO);
         kept.push(bestVideo);
         for (const f of videos) {
           if (f !== bestVideo) dropped.push({ file: f, reason: `то же видео, что ${bestVideo.name}` });
@@ -201,9 +211,14 @@ export function summarize(files) {
   let photos = 0;
   let videos = 0;
   let big = 0;
+  let livePhotos = 0;
 
   for (const f of files) {
     bytes += f.size;
+    if (f.livePhoto) {
+      livePhotos += 1;
+      bytes += f.livePhoto.size;
+    }
     if (f.kind === 'video') videos += 1;
     else photos += 1;
     if (f.size > 50 * 1024 * 1024) big += 1;
@@ -224,6 +239,7 @@ export function summarize(files) {
     photos,
     videos,
     big,
+    livePhotos,
     byExt: [...byExt.entries()].sort((a, b) => b[1].n - a[1].n),
     byYear: [...byYear.entries()].sort((a, b) => a[0].localeCompare(b[0])),
     bySource: [...bySource.entries()].sort((a, b) => b[1] - a[1]),

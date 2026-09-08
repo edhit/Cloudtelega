@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { config, ensureDirs, assertChat, heicMode, pairPrefer, BOT_UPLOAD_LIMIT } from './config.js';
+import { config, ensureDirs, assertChat, heicMode, livePhotoMode, pairPrefer, BOT_UPLOAD_LIMIT } from './config.js';
 import { log, humanSize } from './logger.js';
 import {
   closeDb, findByHash, findSentByStemName, listFailed, listTopics, markFailed, markSent,
@@ -54,13 +54,17 @@ async function collect(args) {
   const { files, dropped } = await scanAll(roots, {
     since: parseSince(args.since),
     prefer: pairPrefer(),
-    livePhotoVideos: config.livePhotoVideos,
+    livePhotoVideos: livePhotoMode(),
     onDateProgress: (done, total) => process.stdout.write(`\r  даты съёмки: ${done}/${total}`),
   });
   process.stdout.write('\r\x1b[2K');
 
   const s = summarize(files);
   log.ok(`К отправке ${s.count} файлов, ${humanSize(s.bytes)} (фото ${s.photos}, видео ${s.videos}, >50 МБ: ${s.big})`);
+  if (s.livePhotos) {
+    const how = livePhotoMode() === 'live' ? 'уйдут одним сообщением (Live Photo)' : 'видео уйдут отдельно';
+    log.info(`Live Photo: ${s.livePhotos} — ${how}`);
+  }
   if (dropped.length) {
     log.info(`Отсеяно как дубликаты по имени: ${dropped.length}`);
     for (const d of dropped.slice(0, 5)) log.plain(`    ${d.file.name} — ${d.reason}`);
@@ -98,6 +102,7 @@ async function cmdScan(args) {
   for (const [ext, v] of summary.byExt) {
     log.plain(`  ${ext.padEnd(6)} ${String(v.n).padStart(6)}  ${humanSize(v.bytes)}`);
   }
+  if (summary.livePhotos) log.plain(`  пар Live Photo: ${summary.livePhotos}`);
   log.plain('  по годам:');
   for (const [year, n] of summary.byYear) log.plain(`    ${year}: ${n}`);
   log.plain(`  источник даты: ${summary.bySource.map(([k, n]) => `${k}=${n}`).join(', ')}`);
@@ -118,7 +123,8 @@ async function cmdSend(args) {
 
   log.info(
     `Режим: ${config.sendAsDocument ? 'документы (без сжатия)' : 'лента (фото с превью)'}, ` +
-      `HEIC: ${heicMode()}, топики: ${config.topicMode === 'year' ? 'по годам' : 'нет'}`,
+      `HEIC: ${heicMode()}, Live Photo: ${livePhotoMode()}, ` +
+      `топики: ${config.topicMode === 'year' ? 'по годам' : 'нет'}`,
   );
   if (dryRun) log.warn('Режим --dry-run: ничего не отправляю.');
 
@@ -174,7 +180,8 @@ async function cmdSend(args) {
 
     if (dryRun) {
       const via = file.size > BOT_UPLOAD_LIMIT ? 'аккаунт' : 'бот';
-      log.plain(`${num} →  ${when}  ${file.relPath} (${humanSize(file.size)}, ${via}, дата: ${file.dateSource})`);
+      const live = file.livePhoto ? `, + ${file.livePhoto.name}` : '';
+      log.plain(`${num} →  ${when}  ${file.relPath}${live} (${humanSize(file.size)}, ${via}, дата: ${file.dateSource})`);
       continue;
     }
 
@@ -184,11 +191,16 @@ async function cmdSend(args) {
       const topicId = await topicForFile(file);
       const jobs = await buildJobs(record, topicId);
       let firstResult = null;
+      let companion = null;
       for (const job of jobs) {
         const res = await sendJob(job);
         firstResult ??= res;
+        if (job.companion) companion = job.companion;
       }
       markSent(sha256, { method: firstResult.method, chatId: config.chatId, topicId, messageId: firstResult.messageId });
+      // Видео Live Photo ушло вместе с кадром — записываем и его, чтобы оно
+      // не отправилось повторно, если попадётся в другой папке.
+      if (companion) await recordCompanion(companion, firstResult, topicId);
       sent += 1;
       bytesSent += file.size;
       log.ok(
@@ -294,6 +306,23 @@ async function cmdCheck() {
 }
 
 /* ── вспомогательное ─────────────────────────────────────────────────────── */
+
+/** Помечает отправленным видео, ушедшее в составе Live Photo. */
+async function recordCompanion(companion, result, topicId) {
+  try {
+    const sha256 = await sha256Cached(companion.absPath, companion.size, companion.mtime, companion.name);
+    if (findByHash(sha256)?.status === 'sent') return;
+    upsertPending({ ...companion, sha256, stemName: stemOf(companion.name).toLowerCase() });
+    markSent(sha256, {
+      method: result.method,
+      chatId: config.chatId,
+      topicId,
+      messageId: result.messageId,
+    });
+  } catch (err) {
+    log.warn(`Не удалось записать в базу видео Live Photo ${companion.name}: ${err.message}`);
+  }
+}
 
 function resolveRoots(args) {
   const roots = args.paths.length ? args.paths : config.scanPaths.map(expand);

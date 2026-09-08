@@ -49,8 +49,9 @@ export const config = {
   // Какой формат считать главным, если рядом лежат IMG_0001.HEIC и IMG_0001.JPG
   // auto — jpeg в режиме ленты, original в режиме документов
   pairPrefer: (process.env.PAIR_PREFER || 'auto').toLowerCase(),
-  // .MOV рядом с фото того же имени — это Live Photo
-  livePhotoVideos: (process.env.LIVE_PHOTO_VIDEOS || 'skip').toLowerCase(),
+  // .MOV рядом с фото того же имени — это Live Photo:
+  // live — отправить парой одним сообщением, skip — не отправлять, send — отдельным видео
+  livePhotoVideos: (process.env.LIVE_PHOTO_VIDEOS || 'live').toLowerCase(),
   // Искать готовый хеш по имени+размеру+mtime — чтобы повторное подключение диска
   // с другой точкой монтирования не перечитывало весь диск заново
   fastRemountMatch: bool(process.env.FAST_REMOUNT_MATCH, true),
@@ -73,6 +74,16 @@ export function heicMode() {
   if (config.heicMode !== 'auto') return config.heicMode;
   if (config.sendAsDocument) return 'document';
   return config.keepHeicOriginal ? 'both' : 'convert';
+}
+
+/**
+ * Что делать с видео Live Photo. В архивном режиме (документами) отправлять их
+ * настоящим Live Photo незачем: Telegram такое сообщение пережимает, поэтому
+ * оба файла уходят как есть.
+ */
+export function livePhotoMode() {
+  if (config.livePhotoVideos === 'live' && config.sendAsDocument) return 'send';
+  return config.livePhotoVideos;
 }
 
 /** Какой формат предпочесть в паре HEIC+JPG с учётом pairPrefer=auto. */
