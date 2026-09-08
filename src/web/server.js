@@ -7,14 +7,16 @@ import { fileURLToPath } from 'node:url';
 
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
 import { envExists, envPath, updateEnv } from '../env.js';
-import { fileIdCoverage, listTopics, stats } from '../db.js';
+import { fileIdCoverage, lastRows, listTopics, sqliteDriver, stats } from '../db.js';
 import { detectIosDevices, inspectMount, listMountPoints, mountHint } from '../devices.js';
 import { log, humanSize } from '../logger.js';
+import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
 import { botConfigured, getChat, getChatMember, getMe, getUpdates } from '../telegram/botApi.js';
 import {
-  cancelWebLogin, mtprotoConfigured, startWebLogin, submitWebLogin, webLoginState, whoAmI,
+  cancelWebLogin, createStorageGroup, mtprotoConfigured, startWebLogin, submitWebLogin,
+  webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -215,6 +217,75 @@ async function detectChats() {
   return [...found.values()];
 }
 
+/** Пример сообщения во всех вариантах подписи — чтобы выбирать глазами, а не наугад. */
+function captionSamples() {
+  const sample = {
+    name: 'IMG_0373.jpg',
+    relPath: '2020/IMG_0373.jpg',
+    size: 3355443,
+    takenAt: new Date(2020, 2, 12, 20, 16).getTime(),
+    dateSource: 'exif',
+    kind: 'photo',
+    camera: 'iPhone 13 Pro',
+    sha256: 'fb1e7549ae08bcc3d0e2a1b4c7f9e6d5a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8',
+  };
+
+  const original = config.captionStyle;
+  const out = {};
+  try {
+    for (const style of ['pretty', 'plain', 'minimal']) {
+      config.captionStyle = style;
+      out[style] = {
+        photo: buildCaption(sample),
+        live: buildCaption(sample, { live: true }),
+        video: buildCaption({ ...sample, name: 'IMG_0412.MOV', relPath: '2020/IMG_0412.MOV', kind: 'video', camera: null, size: 84 * 1024 * 1024 }),
+      };
+    }
+  } finally {
+    config.captionStyle = original;
+  }
+  return out;
+}
+
+/** Кто пишет боту в личку — так узнаётся id владельца без запуска отдельного режима. */
+async function detectOwner() {
+  const found = [];
+
+  if (mtprotoConfigured()) {
+    try {
+      const me = await whoAmI();
+      found.push({
+        id: String(me.id),
+        name: [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username || 'ваш аккаунт',
+        source: 'account',
+      });
+    } catch {
+      /* аккаунт не отвечает — попробуем через бота */
+    }
+  }
+
+  if (botConfigured()) {
+    try {
+      const updates = await getUpdates(0, 0);
+      for (const u of updates) {
+        const msg = u.message ?? u.edited_message;
+        if (msg?.chat?.type !== 'private' || !msg.from || msg.from.is_bot) continue;
+        const id = String(msg.from.id);
+        if (found.some((f) => f.id === id)) continue;
+        found.push({
+          id,
+          name: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') || msg.from.username || id,
+          source: 'bot',
+        });
+      }
+    } catch {
+      /* бот не отвечает — вернём то, что есть */
+    }
+  }
+
+  return found;
+}
+
 async function listDirectories(target) {
   const dir = target ? path.resolve(target.startsWith('~') ? path.join(os.homedir(), target.slice(1)) : target) : os.homedir();
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -252,6 +323,53 @@ const routes = {
   },
 
   'POST /api/checks': async () => runChecks(),
+  'GET /api/caption-preview': async () => captionSamples(),
+  'POST /api/detect-owner': async () => ({ owners: await detectOwner() }),
+
+  'POST /api/create-group': async (body) => {
+    if (!mtprotoConfigured()) {
+      throw new Error('Сначала подключите аккаунт — группу создаёт он, у бота такого права нет');
+    }
+    if (!botConfigured()) throw new Error('Сначала сохраните токен бота');
+
+    const me = await getMe();
+    const created = await createStorageGroup({
+      title: String(body?.title || 'Мой фотоархив').slice(0, 128),
+      topics: body?.topics !== false,
+      botUsername: me.username,
+    });
+
+    updateEnv({
+      TELEGRAM_CHAT_ID: created.chatId,
+      TOPIC_MODE: created.isForum && body?.topics !== false ? 'year' : 'none',
+    });
+    reloadConfig();
+    return created;
+  },
+
+  'GET /api/archive': async () => {
+    const db = stats();
+    // В режиме WAL часть данных лежит в соседнем файле — считаем оба.
+    let fileSize = 0;
+    for (const file of [config.dbPath, `${config.dbPath}-wal`]) {
+      try {
+        fileSize += (await fs.stat(file)).size;
+      } catch {
+        /* файла может не быть */
+      }
+    }
+    return {
+      path: config.dbPath,
+      driver: sqliteDriver(),
+      fileSize,
+      total: db.total,
+      byStatus: db.byStatus,
+      byYear: db.byYear,
+      fileIds: fileIdCoverage(),
+      topics: listTopics(config.chatId),
+      last: lastRows(12),
+    };
+  },
   'POST /api/detect-chats': async () => ({ chats: await detectChats() }),
 
   'POST /api/login/start': async (body) => {

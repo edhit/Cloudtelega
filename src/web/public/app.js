@@ -52,6 +52,16 @@ async function guard(button, fn) {
   }
 }
 
+/** Из вставленного куска сообщения достаём то, что нужно: люди копируют вместе с текстом. */
+function extract(value, kind) {
+  const raw = String(value ?? '').trim();
+  if (kind === 'token') return raw.match(/\d{5,}:[A-Za-z0-9_-]{20,}/)?.[0] ?? raw;
+  if (kind === 'hash') return raw.match(/\b[a-f0-9]{32}\b/i)?.[0] ?? raw;
+  if (kind === 'id') return raw.match(/\d{5,}/)?.[0] ?? raw;
+  if (kind === 'chat') return raw.match(/-100\d{6,}/)?.[0] ?? raw;
+  return raw;
+}
+
 const humanSize = (bytes) => {
   const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
   let n = Number(bytes) || 0;
@@ -67,6 +77,10 @@ function show(pane) {
   $$('#nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.pane === pane)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
+  if (pane === 'archive') loadArchive();
+  if (pane === 'folders') loadDevices();
+  if (pane === 'chat') updateCreateAvailability();
+  if (pane === 'prefs') renderPreview();
 }
 
 $$('#nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.pane)));
@@ -110,12 +124,15 @@ async function refresh() {
   if (s.chatId) pill($('#chatStatus'), '', `сохранён ${s.chatId}`);
   if (s.sessionSet) pill($('#accountStatus'), 'ok', 'аккаунт подключён');
   if (paths.length) pill($('#pathStatus'), 'ok', `папок: ${paths.length}`);
+
+  markDone('archive', (state.stats?.total?.n ?? 0) > 0);
+  updateCreateAvailability();
 }
 
 /* ── шаг 1: бот ──────────────────────────────────────────────────────────── */
 
 $('#saveBot').addEventListener('click', (e) => guard(e.target, async () => {
-  const token = $('#botToken').value.trim();
+  const token = extract($('#botToken').value, 'token');
   if (!token && !state?.settings.botTokenSet) throw new Error('Вставьте токен от @BotFather');
   if (token) await api('/api/settings', { TELEGRAM_BOT_TOKEN: token });
 
@@ -132,6 +149,31 @@ $('#saveBot').addEventListener('click', (e) => guard(e.target, async () => {
 }));
 
 /* ── шаг 2: канал ────────────────────────────────────────────────────────── */
+
+function updateCreateAvailability() {
+  const ready = Boolean(state?.settings.sessionSet);
+  $('#createGroup').disabled = !ready;
+  $('#needAccount').hidden = ready;
+  $('#createHint').textContent = ready
+    ? 'Программа создаст приватную группу, включит темы и сделает бота администратором'
+    : 'Нужен вход в аккаунт — у ботов нет права создавать группы';
+}
+
+$('#createGroup').addEventListener('click', (e) => guard(e.target, async () => {
+  const title = $('#groupTitle').value.trim() || 'Мой фотоархив';
+  const topics = $('#groupTopics').checked;
+
+  const created = await api('/api/create-group', { title, topics });
+  $('#chatId').value = created.chatId;
+  $('#topicYear').checked = created.isForum && topics;
+
+  pill($('#chatStatus'), 'ok', `${created.title}${created.isForum ? ' · с темами' : ''}`);
+  toast(created.isForum ? 'Группа создана, темы включены, бот добавлен' : 'Группа создана, бот добавлен');
+  for (const w of created.warnings ?? []) toast(w, true);
+
+  await refresh();
+  updateCreateAvailability();
+}));
 
 $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
   const { chats } = await api('/api/detect-chats', {});
@@ -165,7 +207,7 @@ $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
 }));
 
 $('#saveChat').addEventListener('click', (e) => guard(e.target, async () => {
-  const chatId = $('#chatId').value.trim();
+  const chatId = extract($('#chatId').value, 'chat');
   if (!chatId) throw new Error('Укажите канал — кнопкой «Найти мой канал» или вручную');
 
   await api('/api/settings', {
@@ -215,8 +257,8 @@ function renderLogin(login) {
 }
 
 $('#loginStart').addEventListener('click', (e) => guard(e.target, async () => {
-  const apiId = $('#apiId').value.trim();
-  const apiHash = $('#apiHash').value.trim();
+  const apiId = extract($('#apiId').value, 'id');
+  const apiHash = extract($('#apiHash').value, 'hash');
   const phone = $('#phone').value.trim();
 
   if (!apiId) throw new Error('Нужен api_id с my.telegram.org');
@@ -281,7 +323,7 @@ function addPath(p) {
   toast(`Добавлено: ${p}`);
 }
 
-$('#findDisks').addEventListener('click', (e) => guard(e.target, async () => {
+async function loadDevices() {
   const { mounts, ios, hint } = await api('/api/devices');
   const box = $('#disks');
   box.innerHTML = '';
@@ -327,7 +369,9 @@ $('#findDisks').addEventListener('click', (e) => guard(e.target, async () => {
     note.querySelector('.mono').textContent = hint;
     box.append(note);
   }
-}));
+}
+
+$('#findDisks').addEventListener('click', (e) => guard(e.target, loadDevices));
 
 async function browseTo(target) {
   const data = await api('/api/browse', { path: target });
@@ -381,6 +425,100 @@ $('#savePrefs').addEventListener('click', (e) => guard(e.target, async () => {
   toast('Настройки сохранены');
   await refresh();
 }));
+
+$('#detectOwner').addEventListener('click', (e) => guard(e.target, async () => {
+  const { owners } = await api('/api/detect-owner', {});
+  if (!owners.length) {
+    throw new Error('Пока не вижу. Напишите своему боту в Telegram любое сообщение и нажмите ещё раз');
+  }
+  const existing = $('#adminIds').value.split(',').map((x) => x.trim()).filter(Boolean);
+  for (const o of owners) if (!existing.includes(o.id)) existing.push(o.id);
+  $('#adminIds').value = existing.join(', ');
+  $('#ownerHint').textContent = `Нашлось: ${owners.map((o) => `${o.name} (${o.id})`).join(', ')}`;
+  toast('Готово — не забудьте «Сохранить»');
+}));
+
+/* ── превью подписи ──────────────────────────────────────────────────────── */
+
+let captionSamples = null;
+
+async function renderPreview() {
+  try {
+    captionSamples ??= await api('/api/caption-preview');
+  } catch {
+    return;
+  }
+  const style = $('#segCaption input:checked')?.value ?? 'pretty';
+  const kind = $('#segPreviewKind input:checked')?.value ?? 'photo';
+  const sample = captionSamples[style]?.[kind];
+  if (!sample) return;
+
+  const box = $('#captionPreview');
+  // Текст сгенерирован программой из образца, посторонних данных в нём нет
+  if (sample.parseMode === 'HTML') box.innerHTML = sample.text;
+  else box.textContent = sample.text;
+
+  $('.bubble-photo').textContent = kind === 'video' ? '🎬' : kind === 'live' ? '🌀' : '🏔';
+}
+
+$$('#segCaption input, #segPreviewKind input').forEach((i) => i.addEventListener('change', renderPreview));
+
+/* ── база отправленного ──────────────────────────────────────────────────── */
+
+async function loadArchive() {
+  const a = await api('/api/archive').catch((err) => {
+    toast(err.message, true);
+    return null;
+  });
+  if (!a) return;
+
+  const sent = a.byStatus.find((r) => r.status === 'sent');
+  const failed = a.byStatus.find((r) => r.status === 'failed');
+  const empty = !a.total.n;
+
+  $('#archiveNumbers').innerHTML = empty
+    ? '<div class="stat wide"><b>Пусто</b><small>Ещё ничего не отправлено — база создана, но записей в ней нет</small></div>'
+    : `
+      <div class="stat"><b>${sent?.n ?? 0}</b><small>файлов в архиве</small></div>
+      <div class="stat"><b>${humanSize(sent?.bytes ?? 0)}</b><small>общий объём</small></div>
+      <div class="stat"><b>${a.fileIds?.with_file_id ?? 0}</b><small>можно переслать мгновенно</small></div>
+      <div class="stat"><b>${a.byYear.length}</b><small>${a.byYear.length ? `лет: ${a.byYear.map((y) => y.year).join(', ')}` : 'лет в архиве'}</small></div>`;
+
+  const rows = $('#archiveRows');
+  rows.innerHTML = '';
+
+  if (empty) {
+    rows.innerHTML = '<div class="row"><div class="row-label"><b>Записей нет</b><small>Как только отправите первый файл, он появится здесь</small></div></div>';
+  } else {
+    if (failed?.n) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<div class="row-label"><b></b><small>Можно попробовать ещё раз кнопкой «Отправить всё»</small></div>';
+      row.querySelector('b').textContent = `С ошибкой: ${failed.n}`;
+      rows.append(row);
+    }
+    for (const r of a.last) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<div class="row-label"><b></b><small></small></div><span class="pill"></span>';
+      row.querySelector('b').textContent = r.rel_path || r.name;
+      const when = r.taken_at ? new Date(r.taken_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+      row.querySelector('small').textContent =
+        `${when} · ${humanSize(r.size)}${r.message_id ? ` · сообщение ${r.message_id}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
+      const badge = row.querySelector('.pill');
+      const map = { sent: ['ok', 'в архиве'], failed: ['err', 'ошибка'], skipped: ['warn', 'пропущен'], pending: ['', 'в очереди'] };
+      const [cls, text] = map[r.status] ?? ['', r.status];
+      badge.className = `pill ${cls}`;
+      badge.textContent = text;
+      rows.append(row);
+    }
+  }
+
+  $('#dbPath').textContent = a.path;
+  $('#dbMeta').textContent = `${humanSize(a.fileSize)} · ${a.driver}${a.topics.length ? ` · топиков: ${a.topics.length}` : ''}`;
+}
+
+$('#refreshArchive').addEventListener('click', (e) => guard(e.target, loadArchive));
 
 /* ── шаг 6: проверка и запуск ────────────────────────────────────────────── */
 

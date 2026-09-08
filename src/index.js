@@ -190,7 +190,15 @@ async function cmdCleanup(args) {
 async function cmdStats() {
   const s = stats();
   const cover = fileIdCoverage();
-  log.plain(`Всего в базе: ${s.total.n} файлов, ${humanSize(s.total.bytes)}`);
+
+  if (!s.total.n) {
+    log.info(`База пуста: ${config.dbPath}`);
+    log.plain('  Ещё ничего не отправлено. Запустите: npm run start -- send');
+    return;
+  }
+
+  log.plain(`База: ${config.dbPath}`);
+  log.plain(`Всего записей: ${s.total.n}, ${humanSize(s.total.bytes)}`);
   for (const row of s.byStatus) {
     log.plain(`  ${row.status.padEnd(8)} ${String(row.n).padStart(6)}  ${humanSize(row.bytes)}`);
   }

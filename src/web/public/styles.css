@@ -236,6 +236,7 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .stat { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; }
+.stat.wide { grid-column: 1 / -1; }
 .stat b { display: block; font-size: 22px; letter-spacing: -0.02em; }
 .stat small { color: var(--text-2); font-size: 13px; }
 
@@ -257,3 +258,38 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
   .content { padding: 26px 16px 70px; }
   .grid2 { grid-template-columns: 1fr; }
 }
+
+/* ── превью сообщения Telegram ───────────────────────────────────────────── */
+
+.preview {
+  background: linear-gradient(160deg, #8aa9c9, #6f8fb0);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  .preview { background: linear-gradient(160deg, #22303d, #1a252f); }
+}
+.bubble {
+  background: var(--panel); border-radius: 14px; padding: 6px 6px 8px;
+  max-width: 330px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.bubble-photo {
+  height: 150px; border-radius: 10px; display: grid; place-items: center; font-size: 44px;
+  background: linear-gradient(150deg, #b8d4e8, #7fa8c8 60%, #5b83a3);
+}
+.bubble-caption {
+  padding: 8px 8px 0; font-size: 14.5px; line-height: 1.42; word-break: break-word; white-space: pre-wrap;
+}
+.bubble-caption b { font-weight: 600; }
+.bubble-caption code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; }
+.bubble-caption blockquote {
+  margin: 6px 0 0; padding: 4px 0 4px 10px;
+  border-left: 3px solid var(--accent); border-radius: 3px;
+  color: var(--text-2); font-size: 13.5px;
+}
+.bubble-time { text-align: right; padding: 2px 8px 0; font-size: 12px; color: var(--text-3); }
+
+details summary::-webkit-details-marker { color: var(--accent); }
+details[open] summary { margin-bottom: 4px; }
+a { color: var(--accent); }

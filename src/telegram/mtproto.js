@@ -200,6 +200,71 @@ export async function whoAmI() {
   return c.getMe();
 }
 
+/* ── создание хранилища «под ключ» ───────────────────────────────────────── */
+
+/**
+ * Создаёт супергруппу с темами и делает бота администратором.
+ * Бот сам себе группу создать не может — это умеет только аккаунт,
+ * поэтому вся тяжёлая работа берётся на себя здесь.
+ *
+ * @param {{title:string, about?:string, topics?:boolean, botUsername:string}} opts
+ * @returns {Promise<{chatId:string, title:string, isForum:boolean, warnings:string[]}>}
+ */
+export async function createStorageGroup({ title, about = 'Архив фото и видео', topics = true, botUsername }) {
+  const { Api } = loadGramJs();
+  const c = await getClient();
+  const warnings = [];
+
+  const created = await c.invoke(
+    new Api.channels.CreateChannel({ title, about, megagroup: true, forum: topics }),
+  );
+  const channel = created.chats?.find((ch) => ch.className === 'Channel' || ch.megagroup);
+  if (!channel) throw new Error('Telegram не вернул созданную группу');
+
+  let isForum = Boolean(channel.forum);
+  if (topics && !isForum) {
+    // Часть аккаунтов включает темы отдельным вызовом
+    try {
+      await c.invoke(new Api.channels.ToggleForum({ channel, enabled: true, tabs: false }));
+      isForum = true;
+    } catch (err) {
+      warnings.push(`Темы включить не удалось (${err.message}). Включите их в настройках группы вручную.`);
+    }
+  }
+
+  const bot = String(botUsername).replace(/^@/, '');
+  try {
+    await c.invoke(new Api.channels.InviteToChannel({ channel, users: [bot] }));
+  } catch (err) {
+    // Бот мог добавиться сам, если уже состоял в группе
+    warnings.push(`Не удалось добавить бота (${err.message})`);
+  }
+
+  try {
+    await c.invoke(
+      new Api.channels.EditAdmin({
+        channel,
+        userId: bot,
+        adminRights: new Api.ChatAdminRights({
+          changeInfo: true,
+          postMessages: true,
+          editMessages: true,
+          deleteMessages: true,
+          inviteUsers: true,
+          pinMessages: true,
+          manageTopics: true,
+        }),
+        rank: 'архивариус',
+      }),
+    );
+  } catch (err) {
+    warnings.push(`Не удалось выдать боту права администратора (${err.message}). Сделайте это вручную.`);
+  }
+
+  peerCache = null;
+  return { chatId: `-100${channel.id}`, title, isForum, warnings };
+}
+
 /* ── вход из браузера (веб-мастер настройки) ─────────────────────────────── */
 
 let webLogin = null;

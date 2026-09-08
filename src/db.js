@@ -341,6 +341,16 @@ export function strayLiveVideos(limit = 500) {
     .all(limit);
 }
 
+/** Последние записи любой судьбы — чтобы было видно, что вообще лежит в базе. */
+export function lastRows(limit = 10) {
+  return openDb()
+    .prepare(
+      `SELECT name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, file_type, last_error
+         FROM files ORDER BY id DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
 /** Сколько отправленного мы можем переиспользовать по file_id. */
 export function fileIdCoverage() {
   return openDb()
