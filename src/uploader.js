@@ -1,7 +1,6 @@
-import path from 'node:path';
 import { config, heicMode, livePhotoMode, BOT_UPLOAD_LIMIT, PHOTO_LIMIT } from './config.js';
+import { buildCaption } from './caption.js';
 import { log, humanSize } from './logger.js';
-import { formatDate } from './dates.js';
 import { convertHeicToJpeg, isHeic, mimeOf, safeUnlink } from './media.js';
 import { botConfigured, sendFileViaBot, sendLivePhotoViaBot } from './telegram/botApi.js';
 import { mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
@@ -9,24 +8,8 @@ import { mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
 // Кадр Live Photo Telegram принимает только как обычное фото.
 const STILL_OK = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
-/**
- * Подпись к сообщению. Дата съёмки идёт первой строкой: порядок в ленте
- * соответствует дате, но подпись нужна, чтобы дату было видно и в отдельном
- * сообщении, и в поиске.
- */
-export function buildCaption(file) {
-  const when = formatDate(file.takenAt ?? file.mtime);
-  // «≈» — дата взята из файловой системы, съёмке она может не соответствовать.
-  const approx = file.dateSource === 'fs' ? '≈ ' : '';
-  const d = new Date(file.takenAt ?? file.mtime);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-
-  return [
-    `📅 ${approx}${when}`,
-    file.relPath || file.name,
-    `${humanSize(file.size)} · #y${d.getFullYear()} #m${month} · sha:${file.sha256.slice(0, 16)}`,
-  ].join('\n');
-}
+/** Подпись в полях задания: текст отдельно, режим разметки отдельно. */
+const captionFields = (caption) => ({ caption: caption.text, parseMode: caption.parseMode });
 
 /** Фото крупнее 10 МБ Telegram превью не сделает — такие уходят документом. */
 function photoTooBigForFeed(size, kind) {
@@ -43,7 +26,7 @@ function originalJob(file, caption, topicId, { forceDocument = false } = {}) {
     kind: file.kind,
     // HEIC и RAW Telegram как фото не покажет — они всегда документом
     asDocument: forceDocument || heic || config.sendAsDocument || photoTooBigForFeed(file.size, file.kind),
-    caption,
+    ...captionFields(caption),
     topicId,
     temporary: false,
   };
@@ -78,7 +61,7 @@ async function buildPlainJobs(file, topicId) {
       mime: 'image/jpeg',
       kind: 'photo',
       asDocument: config.sendAsDocument || photoTooBigForFeed(jpeg.size, 'photo'),
-      caption: mode === 'both' ? `${caption}\n(JPEG из HEIC)` : caption,
+      ...captionFields(mode === 'both' ? buildCaption(file, { note: 'JPEG из HEIC' }) : caption),
       topicId,
       temporary: true,
     });
@@ -107,6 +90,7 @@ async function makeStill(file) {
 async function buildLiveJobs(file, topicId) {
   const live = file.livePhoto;
   const caption = buildCaption(file);
+  const liveCaption = buildCaption(file, { live: true });
   const mode = livePhotoMode();
 
   if (mode === 'live' && botConfigured()) {
@@ -123,14 +107,14 @@ async function buildLiveJobs(file, topicId) {
           videoName: live.name,
           videoSize: live.size,
           videoMime: mimeOf(live.name),
-          caption,
+          ...captionFields(liveCaption),
           topicId,
           companion: live,
         },
       ];
       // В режиме both оригинал HEIC всё равно кладём в архив отдельным документом.
       if (isHeic(file.name) && heicMode() === 'both') {
-        jobs.push(originalJob(file, `${caption}\n(оригинал HEIC)`, topicId, { forceDocument: true }));
+        jobs.push(originalJob(file, buildCaption(file, { note: 'оригинал HEIC' }), topicId, { forceDocument: true }));
       }
       return jobs;
     }
@@ -147,7 +131,7 @@ async function buildLiveJobs(file, topicId) {
       mime: mimeOf(live.name),
       kind: 'video',
       asDocument: config.sendAsDocument,
-      caption: `${caption}\n(видео Live Photo)`,
+      ...captionFields(buildCaption({ ...live, camera: file.camera }, { note: 'видео Live Photo' })),
       topicId,
       companion: live,
       temporary: false,
@@ -211,7 +195,8 @@ async function deliverLivePhoto(job) {
       mime: job.videoMime,
       kind: 'video',
       asDocument: config.sendAsDocument,
-      caption: `${job.caption}\n(видео Live Photo)`,
+      caption: job.caption,
+      parseMode: job.parseMode,
       topicId: job.topicId,
     });
     return still;
@@ -237,6 +222,3 @@ export async function sendJob(job) {
   }
 }
 
-export function stemOf(name) {
-  return path.basename(name, path.extname(name));
-}

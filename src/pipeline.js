@@ -4,7 +4,8 @@ import { sha256Cached } from './hash.js';
 import { log } from './logger.js';
 import { scanAll, summarize } from './scanner.js';
 import { topicForFile } from './telegram/topics.js';
-import { buildJobs, sendJob, stemOf } from './uploader.js';
+import { normalizeStem } from './naming.js';
+import { buildJobs, sendJob } from './uploader.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,6 +65,18 @@ export async function collect({ roots, since = 0, onDateProgress } = {}) {
 }
 
 /**
+ * Считать ли файл уже покрытым тем, что лежит в архиве под тем же именем.
+ * Видео Live Photo при наличии кадра — да: ровно случай IMG_0373.jpg рядом с
+ * IMG_0373_HEVC.MOV. Фото при наличии видео — нет, кадр терять нельзя.
+ * Одинаковые виды (HEIC и JPG) — да, это один снимок в двух форматах.
+ */
+function supersededBy(file, twin) {
+  if (file.kind === 'video' && twin.kind === 'photo') return livePhotoMode() !== 'send';
+  if (file.kind === 'photo' && twin.kind === 'video') return false;
+  return true;
+}
+
+/**
  * Помечает отправленным видео Live Photo.
  * inline = ушло внутри сообщения с кадром (тогда у него собственный video file_id),
  * иначе это было отдельное сообщение со своим file_id.
@@ -72,7 +85,7 @@ async function recordCompanion(companion, result, topicId, inline) {
   try {
     const sha256 = await sha256Cached(companion.absPath, companion.size, companion.mtime, companion.name);
     if (findByHash(sha256)?.status === 'sent') return;
-    upsertPending({ ...companion, sha256, stemName: stemOf(companion.name).toLowerCase() });
+    upsertPending({ ...companion, sha256, stemName: normalizeStem(companion.name) });
     markSent(sha256, {
       method: result.method,
       chatId: config.chatId,
@@ -126,8 +139,8 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
 
       // Тот же снимок в другом формате из прошлых запусков
       if (config.crossRunNameCheck) {
-        const twin = findSentByStemName(stemOf(file.name), file.takenAt);
-        if (twin && twin.name.toLowerCase() !== file.name.toLowerCase()) {
+        const twin = findSentByStemName(normalizeStem(file.name), file.takenAt);
+        if (twin && twin.name.toLowerCase() !== file.name.toLowerCase() && supersededBy(file, twin)) {
           state.duplicates += 1;
           await emit('duplicate', { twin });
           continue;
@@ -144,7 +157,7 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
       }
 
       const existing = findByHash(sha256);
-      if (existing?.status === 'sent') {
+      if (existing?.status === 'sent' || existing?.status === 'skipped') {
         state.duplicates += 1;
         await emit('duplicate', { twin: existing });
         continue;
@@ -154,7 +167,7 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
         continue;
       }
 
-      const record = { ...file, sha256, stemName: stemOf(file.name).toLowerCase() };
+      const record = { ...file, sha256, stemName: normalizeStem(file.name) };
 
       if (dryRun) {
         await emit('planned');

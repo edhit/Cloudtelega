@@ -145,7 +145,7 @@ export async function resolvePeer() {
  * Отправляет файл от имени аккаунта. Лимит — 2 ГБ (4 ГБ с Premium).
  * @returns {Promise<{messageId:number, method:'mtproto'}>}
  */
-export async function sendFileViaAccount({ filePath, fileName, size, caption, asDocument, topicId }) {
+export async function sendFileViaAccount({ filePath, fileName, size, caption, parseMode, asDocument, topicId }) {
   if (size > MTPROTO_UPLOAD_LIMIT) {
     const err = new Error(`Файл больше ${humanSize(MTPROTO_UPLOAD_LIMIT)} — Telegram не примет`);
     err.code = 'TOO_LARGE';
@@ -160,6 +160,7 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, as
   const msg = await c.sendFile(peer, {
     file: new CustomFile(fileName, size, filePath),
     caption: caption?.slice(0, 1024),
+    parseMode: parseMode ? parseMode.toLowerCase() : undefined,
     forceDocument: asDocument ?? config.sendAsDocument,
     silent: true,
     workers: 4,

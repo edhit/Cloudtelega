@@ -1,5 +1,6 @@
 import { openDatabase } from './sqlite.js';
 import { config, ensureDirs } from './config.js';
+import { normalizeStem } from './naming.js';
 
 let db;
 let driver = null;
@@ -76,6 +77,17 @@ function migrate(d) {
   add('files', 'file_type', 'TEXT');
   add('files', 'video_file_id', 'TEXT');
   add('hash_cache', 'name', 'TEXT');
+
+  // Пересчитываем stem_name: раньше суффикс _HEVC у видео Live Photo не отбрасывался,
+  // из-за чего IMG_0373.jpg и IMG_0373_HEVC.MOV считались разными кадрами.
+  const stemVersion = d.prepare('SELECT value FROM meta WHERE key = ?').get('stem_norm')?.value;
+  if (stemVersion !== '2') {
+    const rows = d.prepare('SELECT id, name FROM files').all();
+    const update = d.prepare('UPDATE files SET stem_name = ? WHERE id = ?');
+    for (const row of rows) update.run(normalizeStem(row.name), row.id);
+    d.prepare(`INSERT INTO meta (key, value) VALUES ('stem_norm', '2')
+               ON CONFLICT(key) DO UPDATE SET value = '2'`).run();
+  }
 
   // Индексы создаём после ALTER TABLE — на базе от прошлой версии колонок ещё нет.
   d.exec(`
@@ -301,6 +313,31 @@ export function randomSent(year) {
 export function lastSent(limit = 5) {
   return openDb()
     .prepare(`SELECT * FROM files WHERE status = 'sent' ORDER BY sent_at DESC LIMIT ?`)
+    .all(limit);
+}
+
+/**
+ * Видео Live Photo, которые ушли отдельным сообщением, хотя их кадр уже в архиве.
+ * Совпадает нормализованное имя и дата съёмки, но сообщения разные.
+ */
+export function strayLiveVideos(limit = 500) {
+  return openDb()
+    .prepare(
+      `SELECT v.id, v.sha256, v.name, v.rel_path, v.size, v.taken_at, v.chat_id, v.message_id,
+              p.name AS photo_name, p.message_id AS photo_message_id
+         FROM files v
+         JOIN files p ON p.stem_name = v.stem_name
+                     AND p.id <> v.id
+                     AND p.status = 'sent'
+                     AND p.kind = 'photo'
+                     AND abs(COALESCE(p.taken_at, 0) - COALESCE(v.taken_at, 0)) <= 2000
+        WHERE v.status = 'sent'
+          AND v.kind = 'video'
+          AND v.message_id IS NOT NULL
+          AND (p.message_id IS NULL OR p.message_id <> v.message_id)
+        ORDER BY v.taken_at
+        LIMIT ?`,
+    )
     .all(limit);
 }
 

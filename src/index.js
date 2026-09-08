@@ -9,6 +9,7 @@ import { summarize } from './scanner.js';
 import { formatDate } from './dates.js';
 import { detectIosDevices, inspectMount, listMountPoints, mountHint } from './devices.js';
 import { collect, requestStop, runSend } from './pipeline.js';
+import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import { runBot, stopBot } from './bot.js';
 import { botConfigured, getChat, getMe } from './telegram/botApi.js';
 import { canLogin, disconnect, login, mtprotoConfigured, whoAmI } from './telegram/mtproto.js';
@@ -160,6 +161,31 @@ async function cmdSend(args) {
   });
 }
 
+async function cmdCleanup(args) {
+  const apply = args.yes === 'true';
+  const r = await cleanupStrayLiveVideos({ apply });
+
+  if (!r.found) {
+    log.ok('Лишних видео Live Photo в архиве не нашлось.');
+    return;
+  }
+
+  log.info(`Видео Live Photo, ушедших отдельным сообщением: ${r.found}`);
+  for (const row of r.rows.slice(0, 20)) log.plain(`  ${describeStray(row)}`);
+  if (r.found > 20) log.plain(`  … ещё ${r.found - 20}`);
+
+  if (!apply) {
+    log.warn('Это предпросмотр. Удалить эти сообщения: npm run start -- cleanup --yes');
+    return;
+  }
+
+  log.ok(`Удалено сообщений: ${r.deleted}`);
+  for (const f of r.failed) log.error(`  ${f.name}: ${f.error}`);
+  if (r.failed.length) {
+    log.info('Бот удаляет только там, где он админ с правом «Удаление сообщений».');
+  }
+}
+
 async function cmdStats() {
   const s = stats();
   const cover = fileIdCoverage();
@@ -275,6 +301,8 @@ cloudtelega — Telegram как облачное хранилище для фо�
   npm run start -- bot             режим команд: управлять архивом из Telegram
   npm run start -- stats           статистика по базе отправленного
   npm run start -- retry           повторить файлы, упавшие с ошибкой
+  npm run start -- cleanup         найти лишние видео Live Photo в архиве
+                                   (--yes — удалить эти сообщения)
 
 Опции:
   --path=/Volumes/USB      каталог для сканирования (можно повторять)
@@ -299,6 +327,7 @@ async function main() {
       case 'login': await cmdLogin(); break;
       case 'stats': await cmdStats(); break;
       case 'retry': await cmdRetry(args); break;
+      case 'cleanup': await cmdCleanup(args); break;
       case 'check': await cmdCheck(); break;
       default: usage(); break;
     }

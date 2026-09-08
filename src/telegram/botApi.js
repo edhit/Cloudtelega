@@ -99,7 +99,7 @@ export async function getChat(chatId = config.chatId) {
  * а для «фото с превью» — 10 МБ.
  * @returns {Promise<{messageId:number, method:'bot'}>}
  */
-export async function sendFileViaBot({ filePath, fileName, size, mime, caption, kind, asDocument, topicId }) {
+export async function sendFileViaBot({ filePath, fileName, size, mime, caption, parseMode, kind, asDocument, topicId }) {
   if (config.botApiRoot === 'https://api.telegram.org' && size > BOT_UPLOAD_LIMIT) {
     const err = new Error('Файл больше 50 МБ — Bot API не примет');
     err.code = 'TOO_LARGE';
@@ -114,6 +114,7 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
   form.append('chat_id', String(config.chatId));
   if (topicId) form.append('message_thread_id', String(topicId));
   if (caption) form.append('caption', caption.slice(0, 1024));
+  if (caption && parseMode) form.append('parse_mode', parseMode);
   form.append('disable_notification', 'true');
   if (useDocument) form.append('disable_content_type_detection', 'true');
   if (method === 'sendVideo') form.append('supports_streaming', 'true');
@@ -130,11 +131,12 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
  * Метод sendLivePhoto появился в Bot API 10.0 (апрель 2026).
  * @returns {Promise<{messageId:number, method:'bot'}>}
  */
-export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath, videoName, videoMime, caption, topicId }) {
+export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath, videoName, videoMime, caption, parseMode, topicId }) {
   const form = new FormData();
   form.append('chat_id', String(config.chatId));
   if (topicId) form.append('message_thread_id', String(topicId));
   if (caption) form.append('caption', caption.slice(0, 1024));
+  if (caption && parseMode) form.append('parse_mode', parseMode);
   form.append('disable_notification', 'true');
 
   form.append('photo', await openAsBlob(filePath, { type: mime }), fileName);
@@ -207,6 +209,11 @@ export async function sendLivePhotoByFileId(chatId, photoFileId, videoFileId, ex
     ...extra,
   });
   return result.message_id;
+}
+
+/** Удаляет сообщение из хранилища (бот должен быть админом с правом удаления). */
+export async function deleteMessage(chatId, messageId) {
+  return call('deleteMessage', { chat_id: chatId, message_id: messageId }, { retries: 1 });
 }
 
 /** Копирует сообщение из хранилища — работает и когда file_id нет (файл ушёл через аккаунт). */

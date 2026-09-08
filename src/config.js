@@ -58,6 +58,9 @@ export const config = {
   // Проверять «то же имя + та же дата съёмки» по базе прошлых запусков
   crossRunNameCheck: bool(process.env.CROSS_RUN_NAME_CHECK, true),
 
+  // Вид подписи под сообщением: pretty (по умолчанию) | plain | minimal
+  captionStyle: (process.env.CAPTION_STYLE || 'pretty').toLowerCase(),
+
   // Кто может управлять ботом (id через запятую); свой id покажет команда /id
   adminIds: String(process.env.TELEGRAM_ADMIN_IDS ?? '')
     .split(',')

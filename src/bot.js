@@ -9,6 +9,7 @@ import {
 } from './db.js';
 import { detectIosDevices, inspectMount, listMountPoints } from './devices.js';
 import { collect, isRunning, requestStop, runSend, sendState } from './pipeline.js';
+import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import {
   copyMessage, editMessageText, getUpdates, sendByFileId, sendLivePhotoByFileId,
   sendMessage, setMyCommands,
@@ -27,6 +28,7 @@ const COMMANDS = [
   { command: 'stats', description: 'статистика по годам' },
   { command: 'topics', description: 'топики-годы' },
   { command: 'retry', description: 'повторить упавшие' },
+  { command: 'cleanup', description: 'убрать лишние видео Live Photo' },
   { command: 'id', description: 'узнать свой id' },
   { command: 'help', description: 'список команд' },
 ];
@@ -46,6 +48,7 @@ const HELP = [
   '/stats — сколько всего и по годам',
   '/topics — топики-годы и их id',
   '/retry — вернуть упавшие файлы в очередь',
+  '/cleanup — найти лишние видео Live Photo (/cleanup yes — удалить их сообщения)',
 ].join('\n');
 
 /* ── доступ и пути ───────────────────────────────────────────────────────── */
@@ -277,6 +280,25 @@ async function cmdLast(chatId, arg) {
   return sendMessage(chatId, rows.map((r, i) => `${i + 1}. ${describe(r)}`).join('\n'));
 }
 
+async function cmdCleanup(chatId, arg) {
+  const apply = ['yes', 'да', 'удалить'].includes((arg ?? '').toLowerCase());
+  const r = await cleanupStrayLiveVideos({ apply });
+
+  if (!r.found) return sendMessage(chatId, 'Лишних видео Live Photo не нашлось.');
+
+  const lines = [`Видео Live Photo, ушедших отдельным сообщением: ${r.found}`, ''];
+  for (const row of r.rows.slice(0, 15)) lines.push(`• ${describeStray(row)}`);
+  if (r.found > 15) lines.push(`… ещё ${r.found - 15}`);
+
+  if (!apply) {
+    lines.push('', 'Удалить эти сообщения: /cleanup yes');
+  } else {
+    lines.push('', `Удалено: ${r.deleted}`);
+    for (const f of r.failed) lines.push(`не вышло: ${f.name} — ${f.error}`);
+  }
+  return sendMessage(chatId, lines.join('\n'));
+}
+
 async function cmdTopics(chatId) {
   const rows = listTopics(config.chatId);
   if (!rows.length) return sendMessage(chatId, 'Топиков пока нет (TOPIC_MODE=year создаст их при отправке)');
@@ -316,6 +338,7 @@ async function handleCommand(msg) {
     case '/random': return cmdRandom(chatId, arg);
     case '/last': return cmdLast(chatId, arg);
     case '/topics': return cmdTopics(chatId);
+    case '/cleanup': return cmdCleanup(chatId, arg);
     case '/retry': {
       const n = resetFailed();
       return sendMessage(chatId, n ? `Вернул в очередь: ${n}. Запустить: /send` : 'Упавших файлов нет');

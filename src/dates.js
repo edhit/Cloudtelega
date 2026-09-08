@@ -19,19 +19,34 @@ async function fromExif(absPath) {
       tiff: true,
       ifd0: true,
       exif: true,
-      pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate'],
+      pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'Make', 'Model'],
       reviveValues: true,
     });
     if (!tags) return null;
+
+    let takenAt = null;
     for (const key of ['DateTimeOriginal', 'CreateDate', 'ModifyDate']) {
       const v = tags[key];
       const ms = v instanceof Date ? v.getTime() : Date.parse(v ?? '');
-      if (plausible(ms)) return ms;
+      if (plausible(ms)) {
+        takenAt = ms;
+        break;
+      }
     }
+    return { takenAt, camera: cameraName(tags) };
   } catch {
     // Нет EXIF, битый файл, неподдерживаемый формат — не считаем ошибкой.
+    return null;
   }
-  return null;
+}
+
+/** «Apple» + «iPhone 11 Pro» → «iPhone 11 Pro»; лишнее дублирование убираем. */
+function cameraName(tags) {
+  const make = String(tags.Make ?? '').trim();
+  const model = String(tags.Model ?? '').trim();
+  if (!model) return make || null;
+  if (!make || model.toLowerCase().startsWith(make.toLowerCase())) return model;
+  return `${make} ${model}`;
 }
 
 /* ── MP4 / MOV: атом moov → mvhd → creation_time ─────────────────────────── */
@@ -129,19 +144,44 @@ function fromStat(stat) {
  */
 export async function detectCaptureDate(absPath, stat) {
   const isVideo = VIDEO_EXT.has(extOf(absPath));
+  let camera = null;
 
   if (!isVideo) {
     const exif = await fromExif(absPath);
-    if (exif) return { takenAt: exif, source: 'exif' };
+    camera = exif?.camera ?? null;
+    if (exif?.takenAt) return { takenAt: exif.takenAt, source: 'exif', camera };
   } else {
     const atom = await fromVideoAtoms(absPath);
-    if (atom) return { takenAt: atom, source: 'video' };
+    if (atom) return { takenAt: atom, source: 'video', camera };
   }
 
   const byName = fromFileName(absPath);
-  if (byName) return { takenAt: byName, source: 'filename' };
+  if (byName) return { takenAt: byName, source: 'filename', camera };
 
-  return { takenAt: fromStat(stat), source: 'fs' };
+  return { takenAt: fromStat(stat), source: 'fs', camera };
+}
+
+const MONTHS = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+];
+
+const MONTHS_TAG = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
+];
+
+/** «12 марта 2020, 23:16» */
+export function formatDateHuman(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Хештег месяца: #март2020 */
+export function monthTag(ms) {
+  const d = new Date(ms);
+  return `${MONTHS_TAG[d.getMonth()]}${d.getFullYear()}`;
 }
 
 export function yearOf(ms) {

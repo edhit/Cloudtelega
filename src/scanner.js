@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isMedia, kindOf, extOf, PHOTO_EXT, VIDEO_EXT } from './media.js';
 import { detectCaptureDate } from './dates.js';
+import { normalizeStem } from './naming.js';
 
 // Служебные каталоги, которые встречаются на USB-дисках и на iPhone.
 const SKIP_DIRS = new Set([
@@ -24,11 +25,13 @@ function isSkippedName(name) {
   return SKIP_FILE_PREFIXES.some((p) => name.startsWith(p));
 }
 
-/** Ключ группировки «одно и то же фото в разных форматах»: каталог + имя без расширения. */
+/**
+ * Ключ группировки «это один и тот же кадр»: каталог + имя без расширения.
+ * Служебный суффикс видео Live Photo отбрасывается, поэтому
+ * IMG_0373.jpg и IMG_0373_HEVC.MOV попадают в одну группу.
+ */
 export function stemKey(absPath) {
-  const dir = path.dirname(absPath);
-  const stem = path.basename(absPath, path.extname(absPath));
-  return `${dir}::${stem.toLowerCase()}`;
+  return `${path.dirname(absPath)}::${normalizeStem(path.basename(absPath))}`;
 }
 
 /** Рекурсивный обход каталога: только медиафайлы, со stat. */
@@ -92,9 +95,10 @@ export async function scanDir(root, opts = {}) {
 export async function enrichWithDates(files, onProgress) {
   let done = 0;
   for (const f of files) {
-    const { takenAt, source } = await detectCaptureDate(f.absPath, f.stat);
+    const { takenAt, source, camera } = await detectCaptureDate(f.absPath, f.stat);
     f.takenAt = takenAt;
     f.dateSource = source;
+    f.camera = camera ?? null;
     delete f.stat;
     done += 1;
     if (onProgress && done % 100 === 0) onProgress(done, files.length);
