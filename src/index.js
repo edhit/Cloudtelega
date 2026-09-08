@@ -6,7 +6,7 @@ import { config, ensureDirs, assertChat, heicMode, pairPrefer, BOT_UPLOAD_LIMIT 
 import { log, humanSize } from './logger.js';
 import {
   closeDb, findByHash, findSentByStemName, listFailed, listTopics, markFailed, markSent,
-  resetFailed, stats, upsertPending,
+  resetFailed, sqliteDriver, stats, upsertPending,
 } from './db.js';
 import { sha256Cached } from './hash.js';
 import { scanAll, summarize } from './scanner.js';
@@ -254,7 +254,7 @@ async function cmdLogin() {
 }
 
 async function cmdCheck() {
-  log.info(`База: ${config.dbPath}`);
+  log.info(`База: ${config.dbPath} (${sqliteDriver()})`);
   log.info(`Чат: ${config.chatId || '— не задан —'}${config.topicId ? ` (топик ${config.topicId})` : ''}`);
   log.info(
     `Режим отправки: ${config.sendAsDocument ? 'документы' : 'лента (фото)'}, ` +

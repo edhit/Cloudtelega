@@ -1,7 +1,8 @@
-import Database from 'better-sqlite3';
+import { openDatabase } from './sqlite.js';
 import { config, ensureDirs } from './config.js';
 
 let db;
+let driver = null;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -82,16 +83,25 @@ function migrate(d) {
 export function openDb() {
   if (db) return db;
   ensureDirs();
-  db = new Database(config.dbPath);
+  const opened = openDatabase(config.dbPath);
+  db = opened.db;
+  driver = opened.driver;
   db.exec(SCHEMA);
   migrate(db);
   return db;
+}
+
+/** Какой драйвер SQLite используется: node:sqlite или better-sqlite3. */
+export function sqliteDriver() {
+  openDb();
+  return driver;
 }
 
 export function closeDb() {
   if (db) {
     db.close();
     db = undefined;
+    driver = null;
   }
 }
 
@@ -167,7 +177,21 @@ export function upsertPending(file) {
          stem_key    = excluded.stem_key,
          stem_name   = excluded.stem_name`,
     )
-    .run({ ...file, now });
+    .run({
+      sha256: file.sha256,
+      name: file.name,
+      absPath: file.absPath ?? null,
+      relPath: file.relPath ?? null,
+      size: file.size,
+      mtime: file.mtime ?? null,
+      takenAt: file.takenAt ?? null,
+      dateSource: file.dateSource ?? null,
+      stemKey: file.stemKey ?? null,
+      stemName: file.stemName ?? null,
+      ext: file.ext ?? null,
+      kind: file.kind ?? null,
+      now,
+    });
   return findByHash(file.sha256);
 }
 
@@ -215,7 +239,10 @@ export function listFailed(limit = 50) {
 }
 
 export function resetFailed() {
-  return openDb().prepare(`UPDATE files SET status = 'pending', last_error = NULL WHERE status = 'failed'`).run().changes;
+  const { changes } = openDb()
+    .prepare(`UPDATE files SET status = 'pending', last_error = NULL WHERE status = 'failed'`)
+    .run();
+  return Number(changes);
 }
 
 /* ── топики ──────────────────────────────────────────────────────────────── */

@@ -92,7 +92,12 @@ npm install
 cp .env.example .env   # и заполнить
 ```
 
-Нужен Node.js 20+.
+Нужен **Node.js 22.5+** (лучше 24). Нативных модулей нет — ничего не компилируется,
+`npm install` не требует `build-essential`, `python3` или `make`. База лежит на
+встроенном в Node модуле `node:sqlite`.
+
+Если Node старее 22.5, обновите его (`nvm install 24 && nvm use 24`) — или поставьте
+`npm i better-sqlite3` (потребуется компилятор), программа подхватит его сама.
 
 ## Настройка
 
@@ -237,7 +242,8 @@ sha256 из базы, а не путь. Чтобы при этом не пере
 
 ## База отправленного
 
-SQLite (`data/cloudtelega.db`):
+SQLite (`data/cloudtelega.db`), через встроенный `node:sqlite`; при желании можно
+заставить использовать конкретный драйвер: `CLOUDTELEGA_SQLITE=node|better`.
 
 * `files` — `sha256` (UNIQUE, ключ дедупликации), имя, путь, размер, дата съёмки и её
   источник, имя без расширения, статус (`pending` / `sent` / `failed` / `skipped`),
@@ -279,9 +285,29 @@ src/
   media.js            типы файлов, MIME, конвертация HEIC -> JPEG
   devices.js          поиск дисков и iPhone, подсказки по монтированию
   uploader.js         выбор транспорта по размеру, подписи, HEIC-варианты
-  db.js               SQLite: files / hash_cache / meta
+  db.js               SQLite: files / hash_cache / topics / meta
+  sqlite.js           выбор драйвера: встроенный node:sqlite или better-sqlite3
   logger.js           лог и прогресс
   telegram/botApi.js  Bot API (до 50 МБ), ретраи и flood-limit
   telegram/mtproto.js аккаунт через teleproto (форк GramJS), файлы до 2 ГБ
   telegram/topics.js  топики по годам: поиск существующих и создание новых
 ```
+
+## Если что-то не ставится
+
+**`npm error command failed … better-sqlite3` / `gyp ERR! not found: make`** — старая
+версия проекта тянула нативный модуль. Обновитесь и переустановите зависимости:
+
+```bash
+git pull
+rm -rf node_modules package-lock.json
+npm install
+```
+
+Native-зависимостей в проекте больше нет, компилятор не нужен.
+
+**`ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`** — Node старее 22.5. Обновите Node
+(`nvm install 24 && nvm use 24`) либо поставьте `npm i better-sqlite3`.
+
+**`input buffer is not a HEIC image`** — файл с расширением `.heic`, но не HEIC внутри.
+Оригинал в этом случае всё равно отправляется, терять ничего не нужно.

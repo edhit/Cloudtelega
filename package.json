@@ -16,10 +16,9 @@
     "stats": "node src/index.js stats"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   },
   "dependencies": {
-    "better-sqlite3": "^11.5.0",
     "dotenv": "^16.4.5",
     "exifr": "^7.1.3",
     "heic-convert": "^2.1.0",
