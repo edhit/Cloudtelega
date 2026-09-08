@@ -11,6 +11,7 @@ import { detectIosDevices, inspectMount, listMountPoints, mountHint } from './de
 import { collect, requestStop, runSend } from './pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import { runBot, stopBot } from './bot.js';
+import { runWeb } from './web/server.js';
 import { botConfigured, getChat, getMe } from './telegram/botApi.js';
 import { canLogin, disconnect, login, mtprotoConfigured, whoAmI } from './telegram/mtproto.js';
 
@@ -298,6 +299,7 @@ cloudtelega — Telegram как облачное хранилище для фо�
   npm run start -- login           вход в аккаунт (нужен для файлов > 50 МБ)
   npm run start -- scan  [опции]   что лежит на диске: форматы, годы, источники дат
   npm run start -- send  [опции]   отправить всё новое в канал/группу
+  npm run setup                    настройка в браузере — самый простой путь
   npm run start -- bot             режим команд: управлять архивом из Telegram
   npm run start -- stats           статистика по базе отправленного
   npm run start -- retry           повторить файлы, упавшие с ошибкой
@@ -324,6 +326,10 @@ async function main() {
       case 'scan': await cmdScan(args); break;
       case 'send': await cmdSend(args); break;
       case 'bot': await runBot(); break;
+      case 'setup':
+      case 'web':
+        await runWeb({ port: Number(args.port) || 8787, open: args['no-open'] !== 'true' });
+        break;
       case 'login': await cmdLogin(); break;
       case 'stats': await cmdStats(); break;
       case 'retry': await cmdRetry(args); break;

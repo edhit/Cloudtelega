@@ -90,6 +90,11 @@ export async function getMe() {
   return call('getMe', {});
 }
 
+/** Права бота в чате: без права публиковать сообщения ничего не выйдет. */
+export async function getChatMember(chatId, userId) {
+  return call('getChatMember', { chat_id: chatId, user_id: userId });
+}
+
 export async function getChat(chatId = config.chatId) {
   return call('getChat', { chat_id: chatId });
 }

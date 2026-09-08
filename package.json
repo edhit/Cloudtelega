@@ -8,13 +8,14 @@
     "cloudtelega": "src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js",
+    "bot": "node src/index.js bot",
     "devices": "node src/index.js devices",
+    "login": "node src/index.js login",
     "scan": "node src/index.js scan",
     "send": "node src/index.js send",
-    "login": "node src/index.js login",
-    "stats": "node src/index.js stats",
-    "bot": "node src/index.js bot"
+    "setup": "node src/index.js setup",
+    "start": "node src/index.js",
+    "stats": "node src/index.js stats"
   },
   "engines": {
     "node": ">=22.5.0"

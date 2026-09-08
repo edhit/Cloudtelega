@@ -3,7 +3,8 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { createRequire } from 'node:module';
-import { config, MTPROTO_UPLOAD_LIMIT } from '../config.js';
+import { config, reloadConfig, MTPROTO_UPLOAD_LIMIT } from '../config.js';
+import { updateEnv } from '../env.js';
 import { log, humanSize, progressBar } from '../logger.js';
 
 // teleproto (поддерживаемый форк GramJS) — CommonJS-пакет,
@@ -94,24 +95,11 @@ export async function login() {
   return { me, sessionString };
 }
 
-/** Дописывает TELEGRAM_SESSION в .env (или обновляет существующую строку). */
+/** Сохраняет строку сессии в .env. Это полный доступ к аккаунту — файл только для владельца. */
 function saveSessionToEnv(sessionString) {
-  const envPath = path.resolve('.env');
-  let content = '';
-  try {
-    content = fs.readFileSync(envPath, 'utf8');
-  } catch {
-    content = '';
-  }
-  const line = `TELEGRAM_SESSION=${sessionString}`;
-  if (/^TELEGRAM_SESSION=.*$/m.test(content)) {
-    content = content.replace(/^TELEGRAM_SESSION=.*$/m, line);
-  } else {
-    content += `${content.endsWith('\n') || content === '' ? '' : '\n'}${line}\n`;
-  }
-  fs.writeFileSync(envPath, content, { mode: 0o600 });
+  const file = updateEnv({ TELEGRAM_SESSION: sessionString });
   config.session = sessionString;
-  log.ok(`Сессия сохранена в ${envPath}`);
+  log.ok(`Сессия сохранена в ${file}`);
 }
 
 /** Находит канал/группу по id (-100...) или @username. */
@@ -210,4 +198,90 @@ export async function createForumTopicViaAccount(title) {
 export async function whoAmI() {
   const c = await getClient();
   return c.getMe();
+}
+
+/* ── вход из браузера (веб-мастер настройки) ─────────────────────────────── */
+
+let webLogin = null;
+
+/** Что сейчас нужно от пользователя: код из Telegram, пароль 2FA, или всё готово. */
+export function webLoginState() {
+  if (!webLogin) return { stage: 'idle' };
+
+  // Если Telegram не отвечает (нет сети, неверный api_id), не оставляем страницу в подвешенном виде.
+  const stuck = webLogin.stage === 'starting' && Date.now() - webLogin.startedAt > 45_000;
+  if (stuck && !webLogin.error) {
+    webLogin.stage = 'error';
+    webLogin.error = 'Telegram не ответил. Проверьте api_id, api_hash и интернет';
+  }
+  return { stage: webLogin.stage, error: webLogin.error ?? null, user: webLogin.user ?? null };
+}
+
+/**
+ * Начинает вход по номеру телефона. Код и пароль приходят позже,
+ * отдельными вызовами — их вводят на странице настройки.
+ */
+export async function startWebLogin({ apiId, apiHash, phone }) {
+  await cancelWebLogin();
+
+  const { TelegramClient, StringSession } = loadGramJs();
+  const client = new TelegramClient(new StringSession(''), Number(apiId), String(apiHash), {
+    connectionRetries: 5,
+  });
+  try {
+    client.setLogLevel('error');
+  } catch {
+    /* noop */
+  }
+
+  const ask = (stage) =>
+    new Promise((resolve) => {
+      webLogin.stage = stage;
+      webLogin.resolvers[stage] = resolve;
+    });
+
+  webLogin = { client, stage: 'starting', resolvers: {}, error: null, user: null, startedAt: Date.now() };
+
+  client
+    .start({
+      phoneNumber: async () => String(phone),
+      phoneCode: () => ask('code'),
+      password: () => ask('password'),
+      onError: (err) => {
+        webLogin.error = err?.message ?? String(err);
+      },
+    })
+    .then(async () => {
+      const me = await client.getMe();
+      saveSessionToEnv(client.session.save());
+      reloadConfig();
+      webLogin.user = { name: [me.firstName, me.lastName].filter(Boolean).join(' '), username: me.username ?? null };
+      webLogin.stage = 'done';
+      await client.disconnect().catch(() => {});
+    })
+    .catch((err) => {
+      webLogin.error = err?.message ?? String(err);
+      webLogin.stage = 'error';
+    });
+
+  // Даём GramJS дойти до запроса кода, чтобы страница сразу показала нужное поле.
+  await new Promise((r) => setTimeout(r, 1200));
+  return webLoginState();
+}
+
+export function submitWebLogin(stage, value) {
+  if (!webLogin) throw new Error('Вход не начат');
+  const resolve = webLogin.resolvers[stage];
+  if (!resolve) throw new Error(`Сейчас нужен не «${stage}», а «${webLogin.stage}»`);
+  webLogin.resolvers[stage] = null;
+  webLogin.error = null;
+  webLogin.stage = 'checking';
+  resolve(String(value));
+  return webLoginState();
+}
+
+export async function cancelWebLogin() {
+  if (!webLogin) return;
+  await webLogin.client?.disconnect().catch(() => {});
+  webLogin = null;
 }

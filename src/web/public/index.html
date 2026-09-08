@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudtelega — настройка</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">☁️</div>
+      <div>
+        <div class="brand-title">Cloudtelega</div>
+        <div class="brand-sub">Настройка хранилища</div>
+      </div>
+    </div>
+    <ul class="nav" id="nav">
+      <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
+      <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
+      <li><button data-pane="chat"><span class="nav-num" data-num>3</span><span class="nav-label">Куда складывать</span></button></li>
+      <li><button data-pane="account"><span class="nav-num" data-num>4</span><span class="nav-label">Большие файлы</span></button></li>
+      <li><button data-pane="folders"><span class="nav-num" data-num>5</span><span class="nav-label">Что отправлять</span></button></li>
+      <li><button data-pane="prefs"><span class="nav-num" data-num>6</span><span class="nav-label">Как отправлять</span></button></li>
+      <li><button data-pane="finish"><span class="nav-num" data-num>7</span><span class="nav-label">Проверка и запуск</span></button></li>
+    </ul>
+    <div class="sidebar-foot">
+      Всё, что вы вводите, сохраняется только на этом компьютере — в файл <span class="chip">.env</span> рядом с программой. Никуда больше данные не уходят.
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <!-- ── 1. Начало ─────────────────────────────────────────────────── -->
+    <section class="pane active" id="pane-start">
+      <h1>Ваш личный «iCloud» в Telegram</h1>
+      <p class="lead">Программа находит на диске или на iPhone все фото и видео и складывает их в ваш приватный канал в Telegram. Место не ограничено, платить не нужно. Настройка занимает минут десять — я проведу вас по шагам.</p>
+
+      <div class="group-title">Что понадобится</div>
+      <div class="group">
+        <div class="row"><div class="row-label"><b>Телефон с Telegram</b><small>Понадобится, чтобы создать бота и получить код входа</small></div></div>
+        <div class="row"><div class="row-label"><b>Фото и видео на этом компьютере</b><small>Внешний диск, папка с выгрузкой из iCloud или подключённый iPhone</small></div></div>
+        <div class="row"><div class="row-label"><b>Минут десять времени</b><small>Каждый шаг проверяется сразу, вслепую ничего делать не придётся</small></div></div>
+      </div>
+
+      <div class="note blue">
+        <b>Как это устроено.</b> Файлы до 50 МБ отправляет бот. Файлы крупнее бот отправлять не умеет — для них программа
+        подключается к Telegram от вашего имени. Поэтому шагов настройки два: сначала бот, потом ваш аккаунт.
+      </div>
+
+      <div class="btn-row"><button class="btn btn-primary btn-lg" data-go="bot">Начать →</button></div>
+    </section>
+
+    <!-- ── 2. Бот ────────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-bot">
+      <h1>Шаг 1. Создайте бота</h1>
+      <p class="lead">Бот — это «почтальон», который будет складывать файлы в ваш канал. Создаётся он в самом Telegram, за минуту, бесплатно.</p>
+
+      <div class="group-title">Что сделать в Telegram</div>
+      <div class="group" style="padding: 18px 20px">
+        <ol class="steps">
+          <li>Откройте Telegram и найдите в поиске <b>@BotFather</b> — это официальный бот Telegram с синей галочкой.</li>
+          <li>Нажмите <b>Запустить</b> (Start), затем отправьте команду <span class="chip">/newbot</span>.</li>
+          <li>Он спросит <b>имя</b> — напишите любое, например <span class="chip">Мой архив</span>.</li>
+          <li>Потом спросит <b>username</b> — он должен заканчиваться на <span class="chip">bot</span>, например <span class="chip">moy_arhiv_2026_bot</span>. Если занят — придумайте другой.</li>
+          <li>В ответ придёт сообщение со строкой вида<br><span class="chip">1234567890:AAF5x...KpQ</span> — это токен. Скопируйте его целиком и вставьте ниже.</li>
+        </ol>
+      </div>
+
+      <div class="group">
+        <div class="row row-stack">
+          <label class="field-label" for="botToken">Токен бота</label>
+          <input type="text" id="botToken" class="mono" placeholder="1234567890:AAF5x...KpQ" autocomplete="off" spellcheck="false">
+          <p class="hint">Токен — это пароль от бота. Он сохранится только на этом компьютере.</p>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="saveBot">Сохранить и проверить</button>
+        <span id="botStatus" class="pill">не проверено</span>
+      </div>
+      <div class="btn-row"><button class="btn" data-go="chat">Дальше →</button></div>
+    </section>
+
+    <!-- ── 3. Канал ──────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-chat">
+      <h1>Шаг 2. Куда складывать</h1>
+      <p class="lead">Нужен приватный канал — он виден только вам, места не ограничено, порядок сообщений строго по дате. Если хотите папки по годам — понадобится группа с темами, об этом ниже.</p>
+
+      <div class="group-title">Создайте приватный канал</div>
+      <div class="group" style="padding: 18px 20px">
+        <ol class="steps">
+          <li>В Telegram нажмите <b>карандаш</b> (Новое сообщение) → <b>Создать канал</b>.</li>
+          <li>Название любое, например <span class="chip">Фотоархив</span>. Тип канала — <b>Частный</b>.</li>
+          <li>Когда канал создан, откройте его → название сверху → <b>Изменить</b> → <b>Администраторы</b> → <b>Добавить администратора</b>.</li>
+          <li>Найдите своего бота по username (тот, что заканчивается на <span class="chip">bot</span>) и добавьте. Права оставьте по умолчанию — главное, чтобы стояло <b>Публикация сообщений</b>.</li>
+          <li>Напишите в канал любое сообщение, например «привет». Это нужно, чтобы программа его нашла.</li>
+        </ol>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="detectChat">Найти мой канал</button>
+        <span class="hint" style="margin:0">Программа посмотрит, куда добавлен бот</span>
+      </div>
+      <div id="chatCandidates" class="group" hidden></div>
+
+      <div class="group">
+        <div class="row row-stack">
+          <label class="field-label" for="chatId">Или впишите ID вручную</label>
+          <input type="text" id="chatId" class="mono" placeholder="-1001234567890" autocomplete="off" spellcheck="false">
+          <p class="hint">ID приватного канала всегда начинается с <span class="chip">-100</span>.</p>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Раскладывать по годам</b><small>Папки 2019, 2020, 2021… Работает только в группе с включёнными «Темами»</small></div>
+          <label class="switch"><input type="checkbox" id="topicYear"><span></span></label>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="saveChat">Сохранить и проверить</button>
+        <span id="chatStatus" class="pill">не проверено</span>
+      </div>
+      <div class="btn-row"><button class="btn" data-go="account">Дальше →</button></div>
+    </section>
+
+    <!-- ── 4. Аккаунт ────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-account">
+      <h1>Шаг 3. Файлы больше 50 МБ</h1>
+      <p class="lead">Бот не умеет отправлять файлы тяжелее 50 МБ — это ограничение Telegram. Видео с iPhone почти всегда тяжелее. Чтобы они тоже попали в архив, программа подключается к Telegram от вашего имени: как обычное приложение на новом устройстве.</p>
+
+      <div class="note">
+        <b>Что важно понимать.</b> После входа на компьютере сохранится «ключ от вашего аккаунта» — строка в файле
+        <span class="chip">.env</span>. Тот, кто получит этот файл, войдёт в ваш Telegram без пароля и кода.
+        Держите его при себе, не выкладывайте в интернет и не запускайте программу на чужом компьютере.
+        Отозвать доступ можно в любой момент: Telegram → Настройки → Устройства → завершить сеанс.
+      </div>
+
+      <div class="group-title">Получите api_id и api_hash</div>
+      <div class="group" style="padding: 18px 20px">
+        <ol class="steps">
+          <li>Откройте в браузере <b>my.telegram.org</b> и войдите по своему номеру телефона (код придёт в Telegram).</li>
+          <li>Выберите <b>API development tools</b>.</li>
+          <li>Заполните форму: <b>App title</b> и <b>Short name</b> — любые, например <span class="chip">cloudtelega</span>. Platform — <b>Desktop</b>. Остальное можно не трогать.</li>
+          <li>Нажмите <b>Create application</b>. На следующей странице будут <b>App api_id</b> (число) и <b>App api_hash</b> (длинная строка) — их и вставьте ниже.</li>
+        </ol>
+      </div>
+
+      <div class="group">
+        <div class="row row-stack">
+          <label class="field-label" for="apiId">api_id</label>
+          <input type="text" id="apiId" class="mono" placeholder="1234567" autocomplete="off">
+        </div>
+        <div class="row row-stack">
+          <label class="field-label" for="apiHash">api_hash</label>
+          <input type="text" id="apiHash" class="mono" placeholder="0123456789abcdef0123456789abcdef" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row row-stack">
+          <label class="field-label" for="phone">Номер телефона, на который зарегистрирован Telegram</label>
+          <input type="tel" id="phone" class="mono" placeholder="+79991234567" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="loginStart">Войти</button>
+        <span id="accountStatus" class="pill">не подключён</span>
+      </div>
+
+      <div class="group" id="codeBox" hidden>
+        <div class="row row-stack">
+          <label class="field-label" for="code">Код из Telegram</label>
+          <input type="text" id="code" class="mono" placeholder="12345" inputmode="numeric" autocomplete="one-time-code">
+          <p class="hint">Код приходит <b>внутрь Telegram</b>, в чат «Telegram» с синей галочкой, а не по SMS.</p>
+          <div class="btn-row"><button class="btn btn-primary" id="sendCode">Подтвердить</button></div>
+        </div>
+      </div>
+
+      <div class="group" id="passBox" hidden>
+        <div class="row row-stack">
+          <label class="field-label" for="pass">Пароль двухфакторной авторизации</label>
+          <input type="password" id="pass" placeholder="ваш облачный пароль Telegram" autocomplete="current-password">
+          <p class="hint">Тот самый, который вы задавали в Telegram → Конфиденциальность → Облачный пароль.</p>
+          <div class="btn-row"><button class="btn btn-primary" id="sendPass">Подтвердить</button></div>
+        </div>
+      </div>
+
+      <p class="hint">Можно пропустить этот шаг — тогда крупные видео просто не будут отправляться, а всё остальное заработает.</p>
+      <div class="btn-row"><button class="btn" data-go="folders">Дальше →</button></div>
+    </section>
+
+    <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-folders">
+      <h1>Шаг 4. Что отправлять</h1>
+      <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со всеми вложенными папками и сама отберёт медиафайлы, включая HEIC с iPhone.</p>
+
+      <div class="group-title">Выбранные папки</div>
+      <div class="group" style="padding: 14px 16px">
+        <div class="pathlist" id="pathList"></div>
+        <div class="btn-row">
+          <button class="btn" id="addPath">Добавить папку…</button>
+          <button class="btn" id="findDisks">Показать диски и iPhone</button>
+        </div>
+      </div>
+
+      <div id="disks"></div>
+
+      <div class="group" id="browser" hidden>
+        <div class="row"><div class="row-label"><b id="browserPath" class="mono"></b></div>
+          <button class="btn" id="browserUp">Наверх</button>
+          <button class="btn btn-primary" id="browserPick">Выбрать эту папку</button>
+        </div>
+        <div id="browserList"></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="savePaths">Сохранить</button>
+        <span id="pathStatus" class="pill">не сохранено</span>
+      </div>
+      <div class="btn-row"><button class="btn" data-go="prefs">Дальше →</button></div>
+    </section>
+
+    <!-- ── 6. Настройки отправки ─────────────────────────────────────── -->
+    <section class="pane" id="pane-prefs">
+      <h1>Шаг 5. Как отправлять</h1>
+      <p class="lead">Значения по умолчанию подходят большинству. Если не уверены — просто идите дальше.</p>
+
+      <div class="group-title">Вид архива</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label"><b>Лентой или файлами</b><small>Лента — фото с превью, листается как галерея. Файлы — оригиналы без сжатия, но превью не будет</small></div>
+          <div class="seg" id="segSend">
+            <label><input type="radio" name="sendmode" value="feed" checked><span>Лента</span></label>
+            <label><input type="radio" name="sendmode" value="doc"><span>Файлы</span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Хранить и оригиналы HEIC</b><small>Кроме показанного JPEG отправляется исходный файл с iPhone. Занимает вдвое больше сообщений</small></div>
+          <label class="switch"><input type="checkbox" id="keepHeic"><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Live Photo</b><small>Кадр и его короткое видео уходят одним живым снимком</small></div>
+          <div class="seg" id="segLive">
+            <label><input type="radio" name="live" value="live" checked><span>Живыми</span></label>
+            <label><input type="radio" name="live" value="send"><span>Раздельно</span></label>
+            <label><input type="radio" name="live" value="skip"><span>Без видео</span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Подпись под фото</b><small>Как выглядит текст под каждым снимком</small></div>
+          <div class="seg" id="segCaption">
+            <label><input type="radio" name="caption" value="pretty" checked><span>Красиво</span></label>
+            <label><input type="radio" name="caption" value="plain"><span>Просто</span></label>
+            <label><input type="radio" name="caption" value="minimal"><span>Минимум</span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="group-title">Управление из Telegram</div>
+      <div class="group">
+        <div class="row row-stack">
+          <label class="field-label" for="adminIds">Кто может командовать ботом</label>
+          <input type="text" id="adminIds" class="mono" placeholder="123456789">
+          <p class="hint">Напишите своему боту в личку <span class="chip">/id</span> — он ответит вашим номером. Впишите его сюда, и вы сможете запускать отправку с телефона.</p>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="savePrefs">Сохранить</button>
+        <span id="prefsStatus" class="pill">не сохранено</span>
+      </div>
+      <div class="btn-row"><button class="btn" data-go="finish">Дальше →</button></div>
+    </section>
+
+    <!-- ── 7. Готово ─────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-finish">
+      <h1>Проверка и запуск</h1>
+      <p class="lead">Посмотрим, всё ли на месте, и можно отправлять.</p>
+
+      <div class="group">
+        <div class="row"><div class="row-label"><b>Бот</b><small id="sumBotText">—</small></div><span class="pill" id="sumBot">—</span></div>
+        <div class="row"><div class="row-label"><b>Канал</b><small id="sumChatText">—</small></div><span class="pill" id="sumChat">—</span></div>
+        <div class="row"><div class="row-label"><b>Аккаунт для больших файлов</b><small id="sumAccText">—</small></div><span class="pill" id="sumAcc">—</span></div>
+        <div class="row"><div class="row-label"><b>Папки</b><small id="sumPathText">—</small></div><span class="pill" id="sumPath">—</span></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="recheck">Проверить ещё раз</button>
+        <button class="btn" id="doScan">Посмотреть, что нашлось</button>
+        <button class="btn btn-primary btn-lg" id="doSend">Отправить всё</button>
+        <button class="btn btn-danger" id="doStop" hidden>Остановить</button>
+      </div>
+
+      <div id="scanResult" class="grid2" hidden></div>
+
+      <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
+      <div class="log" id="log" hidden></div>
+
+      <h2>Что дальше</h2>
+      <div class="group">
+        <div class="row"><div class="row-label"><b>Управляйте с телефона</b><small>Запустите <span class="chip">npm run bot</span> — и командуйте боту в личке: /send, /status, /random</small></div></div>
+        <div class="row"><div class="row-label"><b>Диск можно подключать снова</b><small>Программа помнит отправленное и никогда не пришлёт один и тот же снимок дважды</small></div></div>
+        <div class="row"><div class="row-label"><b>Разбор старых дублей</b><small id="cleanupText">Проверить, не ушли ли видео Live Photo отдельными сообщениями</small></div><button class="btn" id="doCleanup">Проверить</button></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
