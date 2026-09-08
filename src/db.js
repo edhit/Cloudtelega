@@ -341,14 +341,23 @@ export function strayLiveVideos(limit = 500) {
     .all(limit);
 }
 
-/** Последние записи любой судьбы — чтобы было видно, что вообще лежит в базе. */
-export function lastRows(limit = 10) {
+/**
+ * Страница записей — база может быть на сотни тысяч файлов,
+ * поэтому список отдаётся порциями, а не целиком.
+ */
+export function listFiles({ limit = 100, offset = 0 } = {}) {
+  const size = Math.max(1, Math.min(500, Number(limit) || 100));
+  const from = Math.max(0, Number(offset) || 0);
   return openDb()
     .prepare(
-      `SELECT name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, file_type, last_error
-         FROM files ORDER BY id DESC LIMIT ?`,
+      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, file_type, last_error
+         FROM files ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
-    .all(limit);
+    .all(size, from);
+}
+
+export function countFiles() {
+  return Number(openDb().prepare('SELECT COUNT(*) n FROM files').get()?.n ?? 0);
 }
 
 /** Сколько отправленного мы можем переиспользовать по file_id. */

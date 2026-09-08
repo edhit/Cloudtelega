@@ -71,6 +71,13 @@ html, body {
 .brand-title { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
 .brand-sub { color: var(--text-2); font-size: 12px; }
 
+.profile-bar { display: flex; gap: 6px; padding: 0 10px 14px; }
+.profile-bar select {
+  flex: 1; min-width: 0; padding: 6px 8px; font-size: 13px;
+  border-radius: 8px; border: 1px solid var(--sep); background: var(--panel); color: var(--text);
+}
+.profile-bar .btn { padding: 6px 11px; font-size: 15px; line-height: 1; }
+
 .nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .nav button {
   width: 100%; display: flex; align-items: center; gap: 10px;

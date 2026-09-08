@@ -2,5 +2,6 @@ node_modules/
 .env
 *.log
 data/
+profiles/
 tmp/
 .DS_Store

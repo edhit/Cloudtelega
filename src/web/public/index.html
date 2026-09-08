@@ -16,6 +16,10 @@
         <div class="brand-sub">Настройка хранилища</div>
       </div>
     </div>
+    <div class="profile-bar">
+      <select id="profileSelect" title="Профиль: у каждого свой бот, группа и архив"></select>
+      <button class="btn" id="newProfile" title="Новый профиль">+</button>
+    </div>
     <ul class="nav" id="nav">
       <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
       <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
@@ -43,6 +47,11 @@
         <div class="row"><div class="row-label"><b>Телефон с Telegram</b><small>Понадобится, чтобы создать бота и получить код входа</small></div></div>
         <div class="row"><div class="row-label"><b>Фото и видео на этом компьютере</b><small>Внешний диск, папка с выгрузкой из iCloud или подключённый iPhone</small></div></div>
         <div class="row"><div class="row-label"><b>Минут десять времени</b><small>Каждый шаг проверяется сразу, вслепую ничего делать не придётся</small></div></div>
+      </div>
+
+      <div class="note blue" style="margin-bottom:14px">
+        <b>Вас несколько?</b> Наверху слева — профили. У каждого свой бот, своя группа, свой аккаунт
+        и своя база: архивы не перемешиваются. Нажмите «+», чтобы завести профиль для другого человека.
       </div>
 
       <div class="note blue">
@@ -350,8 +359,12 @@
 
       <div class="grid2" id="archiveNumbers"></div>
 
-      <div class="group-title">Что внутри</div>
+      <div class="group-title" id="archiveRowsTitle">Что внутри</div>
       <div class="group" id="archiveRows"></div>
+      <div class="btn-row" id="archiveMoreRow" hidden>
+        <button class="btn" id="archiveMore">Показать ещё 100</button>
+        <span class="hint" style="margin:0" id="archiveCounter"></span>
+      </div>
 
       <div class="group-title">Файл базы</div>
       <div class="group">

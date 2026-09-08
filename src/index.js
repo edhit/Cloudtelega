@@ -12,6 +12,7 @@ import { collect, requestStop, runSend } from './pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import { runBot, stopBot } from './bot.js';
 import { runWeb } from './web/server.js';
+import { listProfiles } from './profiles.js';
 import { botConfigured, getChat, getMe } from './telegram/botApi.js';
 import { canLogin, disconnect, login, mtprotoConfigured, whoAmI } from './telegram/mtproto.js';
 
@@ -162,6 +163,19 @@ async function cmdSend(args) {
   });
 }
 
+function cmdProfiles() {
+  const profiles = listProfiles();
+  log.plain('Профили (у каждого свой бот, своя группа, свой аккаунт и своя база):');
+  for (const p of profiles) {
+    const mark = p.active ? '●' : ' ';
+    const state = p.configured ? `настроен${p.chatId ? `, чат ${p.chatId}` : ''}` : 'не настроен';
+    log.plain(`  ${mark} ${p.name.padEnd(16)} ${state}, база ${humanSize(p.dbSize)}`);
+  }
+  log.plain('');
+  log.plain('Работать в другом профиле:  npm run start -- send --profile=имя');
+  log.plain('Создать новый профиль:      откройте npm run setup и нажмите «+» рядом с профилем');
+}
+
 async function cmdCleanup(args) {
   const apply = args.yes === 'true';
   const r = await cleanupStrayLiveVideos({ apply });
@@ -241,6 +255,7 @@ async function cmdLogin() {
 }
 
 async function cmdCheck() {
+  log.info(`Профиль: ${config.profile}`);
   log.info(`База: ${config.dbPath} (${sqliteDriver()})`);
   log.info(`Чат: ${config.chatId || '— не задан —'}${config.topicId ? ` (топик ${config.topicId})` : ''}`);
   log.info(
@@ -313,12 +328,14 @@ cloudtelega — Telegram как облачное хранилище для фо�
   npm run start -- retry           повторить файлы, упавшие с ошибкой
   npm run start -- cleanup         найти лишние видео Live Photo в архиве
                                    (--yes — удалить эти сообщения)
+  npm run start -- profiles        список профилей (у каждого свой архив)
 
 Опции:
   --path=/Volumes/USB      каталог для сканирования (можно повторять)
   --since=2024-01-01       только файлы, снятые позже указанной даты
   --limit=100              обработать не больше N файлов за запуск
   --dry-run                показать план, ничего не отправляя
+  --profile=имя            работать в другом профиле (свой бот, группа и база)
 `);
 }
 
@@ -342,6 +359,7 @@ async function main() {
       case 'stats': await cmdStats(); break;
       case 'retry': await cmdRetry(args); break;
       case 'cleanup': await cmdCleanup(args); break;
+      case 'profiles': cmdProfiles(); break;
       case 'check': await cmdCheck(); break;
       default: usage(); break;
     }

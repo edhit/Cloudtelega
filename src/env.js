@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { profileEnvPath } from './profiles.js';
 
-const ENV_PATH = path.resolve('.env');
 const EXAMPLE_PATH = path.resolve('.env.example');
 
 /** Значение нужно закавычить, если в нём есть пробелы, решётка или кавычки. */
@@ -11,7 +11,7 @@ function quote(value) {
 }
 
 export function envExists() {
-  return fs.existsSync(ENV_PATH);
+  return fs.existsSync(profileEnvPath());
 }
 
 /**
@@ -19,9 +19,12 @@ export function envExists() {
  * Если файла нет, он создаётся из .env.example — вместе с пояснениями.
  */
 export function updateEnv(patch) {
+  const target = profileEnvPath();
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+
   let content = '';
-  if (fs.existsSync(ENV_PATH)) {
-    content = fs.readFileSync(ENV_PATH, 'utf8');
+  if (fs.existsSync(target)) {
+    content = fs.readFileSync(target, 'utf8');
   } else if (fs.existsSync(EXAMPLE_PATH)) {
     content = fs.readFileSync(EXAMPLE_PATH, 'utf8');
   }
@@ -37,10 +40,10 @@ export function updateEnv(patch) {
     }
   }
 
-  fs.writeFileSync(ENV_PATH, content, { mode: 0o600 });
-  return ENV_PATH;
+  fs.writeFileSync(target, content, { mode: 0o600 });
+  return target;
 }
 
 export function envPath() {
-  return ENV_PATH;
+  return profileEnvPath();
 }

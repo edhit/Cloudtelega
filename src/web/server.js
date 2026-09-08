@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
 import { envExists, envPath, updateEnv } from '../env.js';
-import { fileIdCoverage, lastRows, listTopics, sqliteDriver, stats } from '../db.js';
+import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, sqliteDriver, stats } from '../db.js';
 import { detectIosDevices, inspectMount, listMountPoints, mountHint } from '../devices.js';
 import { log, humanSize } from '../logger.js';
 import { buildCaption } from '../caption.js';
@@ -15,9 +15,10 @@ import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
 import { botConfigured, getChat, getChatMember, getMe, getUpdates } from '../telegram/botApi.js';
 import {
-  cancelWebLogin, createStorageGroup, mtprotoConfigured, startWebLogin, submitWebLogin,
-  webLoginState, whoAmI,
+  cancelWebLogin, createStorageGroup, disconnect as disconnectAccount, mtprotoConfigured,
+  startWebLogin, submitWebLogin, webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
+import { createProfile, deleteProfile, listProfiles, setActiveProfile } from '../profiles.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 
@@ -104,6 +105,8 @@ async function buildState() {
     envPath: envPath(),
     envExists: envExists(),
     platform: os.platform(),
+    profile: config.profile,
+    profiles: listProfiles().map(({ name, active, configured, dbSize }) => ({ name, active, configured, dbSize })),
     settings: {
       botToken: mask(config.botToken, 6),
       botTokenSet: Boolean(config.botToken),
@@ -347,6 +350,37 @@ const routes = {
     return created;
   },
 
+  'GET /api/profiles': async () => ({ profiles: listProfiles(), active: config.profile }),
+
+  'POST /api/profiles/create': async (body) => {
+    const name = createProfile(body?.name);
+    return { created: name, profiles: listProfiles() };
+  },
+
+  'POST /api/profiles/switch': async (body) => {
+    if (job.mode || isRunning()) throw new Error('Сейчас идёт отправка — переключите профиль после неё');
+    // У другого профиля свой аккаунт и своя база: старые подключения закрываем.
+    await cancelWebLogin();
+    await disconnectAccount();
+    closeDb();
+    setActiveProfile(body?.name ?? 'default');
+    reloadConfig();
+    return buildState();
+  },
+
+  'POST /api/profiles/delete': async (body) => {
+    deleteProfile(body?.name);
+    return { profiles: listProfiles() };
+  },
+
+  'POST /api/archive/rows': async (body) => {
+    const limit = Math.max(1, Math.min(500, Number(body?.limit) || 100));
+    const offset = Math.max(0, Number(body?.offset) || 0);
+    const rows = listFiles({ limit, offset });
+    const total = countFiles();
+    return { rows, total, offset, limit, hasMore: offset + rows.length < total };
+  },
+
   'GET /api/archive': async () => {
     const db = stats();
     // В режиме WAL часть данных лежит в соседнем файле — считаем оба.
@@ -367,7 +401,8 @@ const routes = {
       byYear: db.byYear,
       fileIds: fileIdCoverage(),
       topics: listTopics(config.chatId),
-      last: lastRows(12),
+      // Первая страница едет сразу, остальные подтягиваются по мере надобности
+      page: { rows: listFiles({ limit: 100, offset: 0 }), total: countFiles(), offset: 0, limit: 100 },
     };
   },
   'POST /api/detect-chats': async () => ({ chats: await detectChats() }),
@@ -499,7 +534,7 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
   });
 
   const link = `http://${host}:${port}/?token=${token}`;
-  log.ok('Мастер настройки запущен.');
+  log.ok(`Мастер настройки запущен. Профиль: ${config.profile}`);
   log.plain('');
   log.plain(`   Откройте в браузере:  ${link}`);
   log.plain('');

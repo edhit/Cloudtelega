@@ -1,8 +1,34 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import dotenv from 'dotenv';
+import { profileDefaults, profileEnvPath, profileName } from './profiles.js';
 
-dotenv.config();
+// Снимок окружения до чтения файлов: настоящие переменные окружения всегда важнее
+// файла настроек, а при смене профиля к ним нужно вернуться.
+const BOOT_ENV = { ...process.env };
+
+// Ключи, которыми управляет программа: при смене профиля их нужно сбросить,
+// иначе значения прошлого профиля протекут в новый.
+const MANAGED_KEYS = [
+  'TELEGRAM_CHAT_ID', 'TELEGRAM_TOPIC_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_API_ROOT',
+  'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'TELEGRAM_SESSION', 'TELEGRAM_ADMIN_IDS',
+  'SCAN_PATHS', 'DB_PATH', 'TMP_DIR', 'TOPIC_MODE', 'HEIC_MODE', 'HEIC_JPEG_QUALITY',
+  'KEEP_HEIC_ORIGINAL', 'SEND_AS_DOCUMENT', 'PAIR_PREFER', 'LIVE_PHOTO_VIDEOS',
+  'FAST_REMOUNT_MATCH', 'CROSS_RUN_NAME_CHECK', 'CAPTION_STYLE', 'BOT_ALLOW_ANY_PATH',
+  'SEND_DELAY_MS', 'MAX_ATTEMPTS',
+];
+
+/** Загружает настройки активного профиля поверх чистого окружения. */
+function loadEnv() {
+  for (const key of MANAGED_KEYS) {
+    if (key in BOOT_ENV) process.env[key] = BOOT_ENV[key];
+    else delete process.env[key];
+  }
+  // override: false — то, что задано настоящей переменной окружения, сильнее файла
+  dotenv.config({ path: profileEnvPath(), override: false });
+}
+
+loadEnv();
 
 const bool = (v, def = false) => {
   if (v === undefined || v === '') return def;
@@ -32,9 +58,10 @@ function build() {
     apiHash: process.env.TELEGRAM_API_HASH?.trim() || '',
     session: process.env.TELEGRAM_SESSION?.trim() || '',
 
+    profile: profileName(),
     scanPaths: list(process.env.SCAN_PATHS),
-    dbPath: path.resolve(process.env.DB_PATH || './data/cloudtelega.db'),
-    tmpDir: path.resolve(process.env.TMP_DIR || './tmp'),
+    dbPath: path.resolve(process.env.DB_PATH || profileDefaults().dbPath),
+    tmpDir: path.resolve(process.env.TMP_DIR || profileDefaults().tmpDir),
 
     // auto: в режиме ленты HEIC конвертируется в JPEG, в режиме документов уходит оригинал
     heicMode: (process.env.HEIC_MODE || 'auto').toLowerCase(),
@@ -77,9 +104,9 @@ function build() {
 
 export const config = build();
 
-/** Перечитывает .env — нужно после того, как настройки изменили через веб-мастер. */
+/** Перечитывает настройки: после правок из мастера и после смены профиля. */
 export function reloadConfig() {
-  dotenv.config({ override: true });
+  loadEnv();
   Object.assign(config, build());
   return config;
 }

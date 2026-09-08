@@ -93,11 +93,46 @@ function markDone(pane, done) {
   num.textContent = done ? '✓' : num.dataset.n ?? num.textContent;
 }
 
+/* ── профили ─────────────────────────────────────────────────────────────── */
+
+function renderProfiles() {
+  const select = $('#profileSelect');
+  select.innerHTML = '';
+  for (const p of state.profiles ?? []) {
+    const option = document.createElement('option');
+    option.value = p.name;
+    option.textContent = p.configured ? p.name : `${p.name} (не настроен)`;
+    option.selected = p.name === state.profile;
+    select.append(option);
+  }
+}
+
+$('#profileSelect').addEventListener('change', (e) => guard(null, async () => {
+  const name = e.target.value;
+  state = await api('/api/profiles/switch', { name });
+  captionSamples = null;
+  await refresh();
+  toast(`Профиль: ${name}`);
+  show('start');
+}));
+
+$('#newProfile').addEventListener('click', (e) => guard(e.target, async () => {
+  const name = prompt('Имя профиля — например, имя человека, чей это архив:');
+  if (!name) return;
+  await api('/api/profiles/create', { name });
+  state = await api('/api/profiles/switch', { name });
+  captionSamples = null;
+  await refresh();
+  toast(`Профиль «${name}» создан — настройте его с первого шага`);
+  show('bot');
+}));
+
 /* ── состояние ───────────────────────────────────────────────────────────── */
 
 async function refresh() {
   state = await api('/api/state');
   const s = state.settings;
+  renderProfiles();
 
   if (s.botTokenSet) $('#botToken').placeholder = s.botToken;
   $('#chatId').value = s.chatId || '';
@@ -465,6 +500,49 @@ $$('#segCaption input, #segPreviewKind input').forEach((i) => i.addEventListener
 
 /* ── база отправленного ──────────────────────────────────────────────────── */
 
+let archiveOffset = 0;
+let archiveTotal = 0;
+
+function statusBadge(status) {
+  const map = { sent: ['ok', 'в архиве'], failed: ['err', 'ошибка'], skipped: ['warn', 'пропущен'], pending: ['', 'в очереди'] };
+  return map[status] ?? ['', status];
+}
+
+function appendArchiveRows(rows) {
+  const box = $('#archiveRows');
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<div class="row-label"><b></b><small></small></div><span class="pill"></span>';
+    row.querySelector('b').textContent = r.rel_path || r.name;
+    const when = r.taken_at ? new Date(r.taken_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+    row.querySelector('small').textContent =
+      `${when} · ${humanSize(r.size)}${r.message_id ? ` · сообщение ${r.message_id}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
+    const [cls, text] = statusBadge(r.status);
+    const badge = row.querySelector('.pill');
+    badge.className = `pill ${cls}`;
+    badge.textContent = text;
+    box.append(row);
+  }
+  archiveOffset += rows.length;
+  updateArchiveFooter();
+}
+
+function updateArchiveFooter() {
+  const more = archiveOffset < archiveTotal;
+  $('#archiveMoreRow').hidden = archiveTotal === 0;
+  $('#archiveMore').hidden = !more;
+  $('#archiveCounter').textContent = archiveTotal
+    ? `Показано ${archiveOffset} из ${archiveTotal}`
+    : '';
+}
+
+async function loadMoreArchive() {
+  const page = await api('/api/archive/rows', { offset: archiveOffset, limit: 100 });
+  archiveTotal = page.total;
+  appendArchiveRows(page.rows);
+}
+
 async function loadArchive() {
   const a = await api('/api/archive').catch((err) => {
     toast(err.message, true);
@@ -486,10 +564,15 @@ async function loadArchive() {
 
   const rows = $('#archiveRows');
   rows.innerHTML = '';
+  archiveOffset = 0;
+  archiveTotal = a.page?.total ?? 0;
 
   if (empty) {
     rows.innerHTML = '<div class="row"><div class="row-label"><b>Записей нет</b><small>Как только отправите первый файл, он появится здесь</small></div></div>';
+    $('#archiveRowsTitle').textContent = 'Что внутри';
+    updateArchiveFooter();
   } else {
+    $('#archiveRowsTitle').textContent = `Что внутри · всего записей ${archiveTotal}`;
     if (failed?.n) {
       const row = document.createElement('div');
       row.className = 'row';
@@ -497,26 +580,15 @@ async function loadArchive() {
       row.querySelector('b').textContent = `С ошибкой: ${failed.n}`;
       rows.append(row);
     }
-    for (const r of a.last) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = '<div class="row-label"><b></b><small></small></div><span class="pill"></span>';
-      row.querySelector('b').textContent = r.rel_path || r.name;
-      const when = r.taken_at ? new Date(r.taken_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
-      row.querySelector('small').textContent =
-        `${when} · ${humanSize(r.size)}${r.message_id ? ` · сообщение ${r.message_id}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
-      const badge = row.querySelector('.pill');
-      const map = { sent: ['ok', 'в архиве'], failed: ['err', 'ошибка'], skipped: ['warn', 'пропущен'], pending: ['', 'в очереди'] };
-      const [cls, text] = map[r.status] ?? ['', r.status];
-      badge.className = `pill ${cls}`;
-      badge.textContent = text;
-      rows.append(row);
-    }
+    // Первая сотня приехала вместе со сводкой, остальное — по кнопке
+    appendArchiveRows(a.page?.rows ?? []);
   }
 
   $('#dbPath').textContent = a.path;
   $('#dbMeta').textContent = `${humanSize(a.fileSize)} · ${a.driver}${a.topics.length ? ` · топиков: ${a.topics.length}` : ''}`;
 }
+
+$('#archiveMore').addEventListener('click', (e) => guard(e.target, loadMoreArchive));
 
 $('#refreshArchive').addEventListener('click', (e) => guard(e.target, loadArchive));
 
