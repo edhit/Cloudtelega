@@ -58,6 +58,14 @@ export const config = {
   // Проверять «то же имя + та же дата съёмки» по базе прошлых запусков
   crossRunNameCheck: bool(process.env.CROSS_RUN_NAME_CHECK, true),
 
+  // Кто может управлять ботом (id через запятую); свой id покажет команда /id
+  adminIds: String(process.env.TELEGRAM_ADMIN_IDS ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean),
+  // Разрешить боту сканировать любые каталоги, а не только SCAN_PATHS и точки монтирования
+  botAllowAnyPath: bool(process.env.BOT_ALLOW_ANY_PATH, false),
+
   sendDelayMs: int(process.env.SEND_DELAY_MS, 1200),
   maxAttempts: int(process.env.MAX_ATTEMPTS, 3),
 };

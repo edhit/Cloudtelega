@@ -173,7 +173,8 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, as
   });
   process.stdout.write('\r\x1b[2K');
 
-  return { messageId: msg.id, method: 'mtproto' };
+  // file_id из Bot API у MTProto нет: такие сообщения переиспользуются через copyMessage
+  return { messageId: msg.id, method: 'mtproto', fileType: null, fileId: null, fileUniqueId: null, videoFileId: null };
 }
 
 /** Список существующих топиков форум-супергруппы: [{ id, title }]. */

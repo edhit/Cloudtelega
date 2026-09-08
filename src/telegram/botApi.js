@@ -59,6 +59,29 @@ async function call(method, payload, { retries = 3 } = {}) {
   }
 }
 
+/** Достаёт file_id из ответа Telegram: его можно переиспользовать без повторной загрузки. */
+export function extractMedia(msg) {
+  if (msg?.live_photo) {
+    const still = msg.live_photo.photo?.at(-1);
+    return {
+      fileType: 'live_photo',
+      fileId: still?.file_id ?? null,
+      fileUniqueId: still?.file_unique_id ?? null,
+      videoFileId: msg.live_photo.file_id ?? null,
+    };
+  }
+  if (msg?.photo?.length) {
+    const best = msg.photo.at(-1); // последний размер — самый большой
+    return { fileType: 'photo', fileId: best.file_id, fileUniqueId: best.file_unique_id, videoFileId: null };
+  }
+  for (const key of ['video', 'animation', 'document', 'audio', 'voice', 'video_note']) {
+    if (msg?.[key]) {
+      return { fileType: key, fileId: msg[key].file_id, fileUniqueId: msg[key].file_unique_id, videoFileId: null };
+    }
+  }
+  return { fileType: null, fileId: null, fileUniqueId: null, videoFileId: null };
+}
+
 export function botConfigured() {
   return Boolean(config.botToken);
 }
@@ -99,7 +122,7 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
   form.append(field, blob, fileName);
 
   const result = await call(method, form);
-  return { messageId: result.message_id, method: 'bot' };
+  return { messageId: result.message_id, method: 'bot', ...extractMedia(result) };
 }
 
 /**
@@ -118,7 +141,7 @@ export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath,
   form.append('live_photo', await openAsBlob(videoPath, { type: videoMime ?? 'video/quicktime' }), videoName);
 
   const result = await call('sendLivePhoto', form, { retries: 1 });
-  return { messageId: result.message_id, method: 'bot' };
+  return { messageId: result.message_id, method: 'bot', ...extractMedia(result) };
 }
 
 /**
@@ -129,4 +152,78 @@ export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath,
 export async function createForumTopicViaBot(title) {
   const result = await call('createForumTopic', { chat_id: config.chatId, name: title });
   return result.message_thread_id;
+}
+
+/* ── переписка с ботом (режим команд) ────────────────────────────────────── */
+
+export async function sendMessage(chatId, text, extra = {}) {
+  return call('sendMessage', {
+    chat_id: chatId,
+    text: text.slice(0, 4096),
+    disable_notification: true,
+    link_preview_options: { is_disabled: true },
+    ...extra,
+  });
+}
+
+export async function editMessageText(chatId, messageId, text, extra = {}) {
+  try {
+    return await call('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text.slice(0, 4096),
+      link_preview_options: { is_disabled: true },
+      ...extra,
+    });
+  } catch (err) {
+    // «message is not modified» — не ошибка, просто текст не изменился
+    if (/not modified/i.test(err.description ?? '')) return null;
+    throw err;
+  }
+}
+
+/** Отправляет уже загруженный файл по file_id — мгновенно, без повторной загрузки. */
+export async function sendByFileId(chatId, fileType, fileId, extra = {}) {
+  const methods = {
+    photo: ['sendPhoto', 'photo'],
+    video: ['sendVideo', 'video'],
+    animation: ['sendAnimation', 'animation'],
+    document: ['sendDocument', 'document'],
+    audio: ['sendAudio', 'audio'],
+    voice: ['sendVoice', 'voice'],
+    video_note: ['sendVideoNote', 'video_note'],
+  };
+  const [method, field] = methods[fileType] ?? methods.document;
+  const result = await call(method, { chat_id: chatId, [field]: fileId, ...extra });
+  return result.message_id;
+}
+
+/** Пересобирает Live Photo из уже загруженных file_id — без повторной загрузки. */
+export async function sendLivePhotoByFileId(chatId, photoFileId, videoFileId, extra = {}) {
+  const result = await call('sendLivePhoto', {
+    chat_id: chatId,
+    photo: photoFileId,
+    live_photo: videoFileId,
+    ...extra,
+  });
+  return result.message_id;
+}
+
+/** Копирует сообщение из хранилища — работает и когда file_id нет (файл ушёл через аккаунт). */
+export async function copyMessage(toChatId, fromChatId, messageId, extra = {}) {
+  const result = await call('copyMessage', {
+    chat_id: toChatId,
+    from_chat_id: fromChatId,
+    message_id: messageId,
+    ...extra,
+  });
+  return result.message_id;
+}
+
+export async function getUpdates(offset, timeoutSec = 30) {
+  return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message'] }, { retries: 2 });
+}
+
+export async function setMyCommands(commands) {
+  return call('setMyCommands', { commands });
 }

@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS files (
   chat_id     TEXT,
   topic_id    INTEGER,
   message_id  INTEGER,
+  file_id     TEXT,   -- переиспользуемый идентификатор Bot API
+  file_unique_id TEXT,
+  file_type   TEXT,   -- photo | video | document | live_photo | ...
+  video_file_id  TEXT,-- видео Live Photo
   sent_at     INTEGER,
   attempts    INTEGER NOT NULL DEFAULT 0,
   last_error  TEXT,
@@ -67,6 +71,10 @@ function migrate(d) {
   add('files', 'stem_key', 'TEXT');
   add('files', 'stem_name', 'TEXT');
   add('files', 'topic_id', 'INTEGER');
+  add('files', 'file_id', 'TEXT');
+  add('files', 'file_unique_id', 'TEXT');
+  add('files', 'file_type', 'TEXT');
+  add('files', 'video_file_id', 'TEXT');
   add('hash_cache', 'name', 'TEXT');
 
   // Индексы создаём после ALTER TABLE — на базе от прошлой версии колонок ещё нет.
@@ -195,14 +203,26 @@ export function upsertPending(file) {
   return findByHash(file.sha256);
 }
 
-export function markSent(sha256, { method, chatId, topicId, messageId }) {
+export function markSent(sha256, { method, chatId, topicId, messageId, fileId, fileUniqueId, fileType, videoFileId }) {
   openDb()
     .prepare(
       `UPDATE files
-          SET status = 'sent', method = ?, chat_id = ?, topic_id = ?, message_id = ?, sent_at = ?, last_error = NULL
+          SET status = 'sent', method = ?, chat_id = ?, topic_id = ?, message_id = ?, sent_at = ?,
+              file_id = ?, file_unique_id = ?, file_type = ?, video_file_id = ?, last_error = NULL
         WHERE sha256 = ?`,
     )
-    .run(method, String(chatId), topicId ?? null, messageId ?? null, Date.now(), sha256);
+    .run(
+      method,
+      String(chatId),
+      topicId ?? null,
+      messageId ?? null,
+      Date.now(),
+      fileId ?? null,
+      fileUniqueId ?? null,
+      fileType ?? null,
+      videoFileId ?? null,
+      sha256,
+    );
 }
 
 export function markFailed(sha256, error) {
@@ -243,6 +263,55 @@ export function resetFailed() {
     .prepare(`UPDATE files SET status = 'pending', last_error = NULL WHERE status = 'failed'`)
     .run();
   return Number(changes);
+}
+
+/* ── выборки для бота ────────────────────────────────────────────────────── */
+
+/** Поиск по имени и пути среди отправленного. */
+export function searchSent(query, limit = 10) {
+  const like = `%${String(query).trim().toLowerCase()}%`;
+  return openDb()
+    .prepare(
+      `SELECT * FROM files
+        WHERE status = 'sent' AND (lower(name) LIKE ? OR lower(rel_path) LIKE ? OR sha256 LIKE ?)
+        ORDER BY taken_at DESC
+        LIMIT ?`,
+    )
+    .all(like, like, `${String(query).trim().toLowerCase()}%`, limit);
+}
+
+/** Случайный отправленный файл — опционально за конкретный год. */
+export function randomSent(year) {
+  const d = openDb();
+  if (year) {
+    return (
+      d
+        .prepare(
+          `SELECT * FROM files
+            WHERE status = 'sent' AND strftime('%Y', taken_at / 1000, 'unixepoch') = ?
+            ORDER BY RANDOM() LIMIT 1`,
+        )
+        .get(String(year)) ?? null
+    );
+  }
+  return d.prepare(`SELECT * FROM files WHERE status = 'sent' ORDER BY RANDOM() LIMIT 1`).get() ?? null;
+}
+
+/** Последние отправленные файлы. */
+export function lastSent(limit = 5) {
+  return openDb()
+    .prepare(`SELECT * FROM files WHERE status = 'sent' ORDER BY sent_at DESC LIMIT ?`)
+    .all(limit);
+}
+
+/** Сколько отправленного мы можем переиспользовать по file_id. */
+export function fileIdCoverage() {
+  return openDb()
+    .prepare(
+      `SELECT COUNT(*) total, SUM(CASE WHEN file_id IS NOT NULL THEN 1 ELSE 0 END) with_file_id
+         FROM files WHERE status = 'sent'`,
+    )
+    .get();
 }
 
 /* ── топики ──────────────────────────────────────────────────────────────── */
