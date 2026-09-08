@@ -2,6 +2,7 @@ import { config, heicMode, livePhotoMode, BOT_UPLOAD_LIMIT, PHOTO_LIMIT } from '
 import { buildCaption } from './caption.js';
 import { log, humanSize } from './logger.js';
 import { convertHeicToJpeg, isHeic, mimeOf, safeUnlink } from './media.js';
+import { splitMotionPhoto } from './motion.js';
 import { botConfigured, sendFileViaBot, sendLivePhotoViaBot } from './telegram/botApi.js';
 import { mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
 
@@ -28,7 +29,7 @@ function originalJob(file, caption, topicId, { forceDocument = false } = {}) {
     asDocument: forceDocument || heic || config.sendAsDocument || photoTooBigForFeed(file.size, file.kind),
     ...captionFields(caption),
     topicId,
-    temporary: false,
+    tempFiles: [],
   };
 }
 
@@ -63,7 +64,7 @@ async function buildPlainJobs(file, topicId) {
       asDocument: config.sendAsDocument || photoTooBigForFeed(jpeg.size, 'photo'),
       ...captionFields(mode === 'both' ? buildCaption(file, { note: 'JPEG из HEIC' }) : caption),
       topicId,
-      temporary: true,
+      tempFiles: [jpeg.path],
     });
   }
 
@@ -73,17 +74,57 @@ async function buildPlainJobs(file, topicId) {
 /** Кадр для Live Photo: готовый JPEG/PNG или сконвертированный из HEIC. */
 async function makeStill(file) {
   if (STILL_OK.has(file.ext)) {
-    return { filePath: file.absPath, fileName: file.name, size: file.size, mime: mimeOf(file.name), temporary: false };
+    return { filePath: file.absPath, fileName: file.name, size: file.size, mime: mimeOf(file.name), tempFiles: [] };
   }
   if (!isHeic(file.name)) return null; // RAW и прочее кадром Live Photo быть не может
 
   try {
     const jpeg = await convertHeicToJpeg(file.absPath);
-    return { filePath: jpeg.path, fileName: jpeg.name, size: jpeg.size, mime: 'image/jpeg', temporary: true };
+    return { filePath: jpeg.path, fileName: jpeg.name, size: jpeg.size, mime: 'image/jpeg', tempFiles: [jpeg.path] };
   } catch (err) {
     log.warn(`${file.name}: не удалось сконвертировать кадр Live Photo (${err.message})`);
     return null;
   }
+}
+
+/**
+ * Motion Photo с Android: видео спрятано внутри JPEG. Достаём его и отправляем
+ * той же живой парой, что и Live Photo с iPhone.
+ */
+async function buildMotionJob(file, topicId) {
+  if (livePhotoMode() !== 'live' || config.sendAsDocument || !botConfigured()) return null;
+
+  let parts;
+  try {
+    parts = await splitMotionPhoto(file.absPath);
+  } catch (err) {
+    log.warn(`${file.name}: не удалось разобрать Motion Photo (${err.message})`);
+    return null;
+  }
+  if (!parts) return null;
+
+  if (parts.still.size > PHOTO_LIMIT || parts.video.size > BOT_UPLOAD_LIMIT) {
+    await safeUnlink(parts.still.path);
+    await safeUnlink(parts.video.path);
+    return null;
+  }
+
+  log.info(`${file.name}: Motion Photo — отправляю живым снимком`);
+  return {
+    type: 'livePhoto',
+    filePath: parts.still.path,
+    fileName: parts.still.name,
+    size: parts.still.size,
+    mime: 'image/jpeg',
+    kind: 'photo',
+    videoPath: parts.video.path,
+    videoName: parts.video.name,
+    videoSize: parts.video.size,
+    videoMime: 'video/mp4',
+    ...captionFields(buildCaption(file, { live: true })),
+    topicId,
+    tempFiles: [parts.still.path, parts.video.path],
+  };
 }
 
 /** Фото + короткое видео рядом = Live Photo (sendLivePhoto, Bot API 10.0). */
@@ -110,6 +151,7 @@ async function buildLiveJobs(file, topicId) {
           ...captionFields(liveCaption),
           topicId,
           companion: live,
+          tempFiles: still.tempFiles ?? [],
         },
       ];
       // В режиме both оригинал HEIC всё равно кладём в архив отдельным документом.
@@ -118,7 +160,7 @@ async function buildLiveJobs(file, topicId) {
       }
       return jobs;
     }
-    if (still?.temporary) await safeUnlink(still.filePath);
+    for (const temp of still?.tempFiles ?? []) await safeUnlink(temp);
     log.warn(`${file.name}: пара не подходит для Live Photo (кадр ${humanSize(still?.size ?? file.size)}, видео ${humanSize(live.size)}) — шлю раздельно`);
   }
 
@@ -134,14 +176,22 @@ async function buildLiveJobs(file, topicId) {
       ...captionFields(buildCaption({ ...live, camera: file.camera }, { note: 'видео Live Photo' })),
       topicId,
       companion: live,
-      temporary: false,
+      tempFiles: [],
     });
   }
   return jobs;
 }
 
 export async function buildJobs(file, topicId) {
-  return file.livePhoto ? buildLiveJobs(file, topicId) : buildPlainJobs(file, topicId);
+  if (file.livePhoto) return buildLiveJobs(file, topicId);
+
+  // Одиночный JPEG может оказаться Motion Photo — со спрятанным внутри видео
+  if (file.kind === 'photo') {
+    const motion = await buildMotionJob(file, topicId);
+    if (motion) return [motion];
+  }
+
+  return buildPlainJobs(file, topicId);
 }
 
 /** Выбирает транспорт: до 50 МБ — бот, крупнее — аккаунт (MTProto). */
@@ -218,7 +268,7 @@ export async function sendJob(job) {
       throw err;
     }
   } finally {
-    if (job.temporary) await safeUnlink(job.filePath);
+    for (const temp of job.tempFiles ?? []) await safeUnlink(temp);
   }
 }
 

@@ -71,12 +71,45 @@ html, body {
 .brand-title { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
 .brand-sub { color: var(--text-2); font-size: 12px; }
 
-.profile-bar { display: flex; gap: 6px; padding: 0 10px 14px; }
-.profile-bar select {
-  flex: 1; min-width: 0; padding: 6px 8px; font-size: 13px;
-  border-radius: 8px; border: 1px solid var(--sep); background: var(--panel); color: var(--text);
+/* ── профили в боковой колонке ───────────────────────────────────────────── */
+
+.side-title {
+  padding: 0 10px 6px; color: var(--text-3);
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
 }
-.profile-bar .btn { padding: 6px 11px; font-size: 15px; line-height: 1; }
+.accounts { margin-bottom: 16px; }
+.accounts + .side-title { padding-top: 4px; }
+.account-list { list-style: none; margin: 0 0 2px; padding: 0; display: grid; gap: 2px; }
+
+.account {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  padding: 6px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.account:hover { background: var(--chip); }
+.account[aria-current='true'] { background: var(--accent); color: #fff; }
+.account[aria-current='true'] .account-text small { color: rgba(255, 255, 255, 0.75); }
+
+.account-avatar {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: 600; color: #fff; text-transform: uppercase;
+  background: linear-gradient(160deg, hsl(var(--h, 210) 78% 62%), hsl(var(--h, 210) 72% 48%));
+}
+.account-avatar.plus {
+  background: var(--chip); color: var(--text-2); font-size: 17px; font-weight: 400; line-height: 1;
+}
+.account-text { flex: 1; min-width: 0; }
+.account-text b { display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-text small { display: block; font-size: 11.5px; color: var(--text-2); }
+
+.account-del {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: none; place-items: center; font-size: 15px; line-height: 1;
+  color: var(--text-2); background: var(--chip);
+}
+.account:hover .account-del { display: grid; }
+.account-del:hover { background: var(--red); color: #fff; }
 
 .nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .nav button {
@@ -209,6 +242,7 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
   background: var(--chip); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px;
 }
 .hint { color: var(--text-2); font-size: 13px; margin: 8px 0 0; }
+.prewrap { display: block; margin-top: 8px; white-space: pre-wrap; font-size: 13px; line-height: 1.55; }
 .note {
   background: color-mix(in srgb, var(--orange) 12%, transparent);
   border-radius: 10px; padding: 12px 14px; font-size: 13.5px; margin: 14px 0;

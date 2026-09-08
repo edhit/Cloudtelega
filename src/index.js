@@ -7,7 +7,7 @@ import { log, humanSize } from './logger.js';
 import { closeDb, fileIdCoverage, listFailed, listTopics, resetFailed, sqliteDriver, stats } from './db.js';
 import { summarize } from './scanner.js';
 import { formatDate } from './dates.js';
-import { detectIosDevices, inspectMount, listMountPoints, mountHint } from './devices.js';
+import { detectPhones, inspectMount, listMountPoints, mountHint } from './devices.js';
 import { collect, requestStop, runSend } from './pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import { runBot, stopBot } from './bot.js';
@@ -66,11 +66,11 @@ const clearLine = () => process.stdout.write('\r\x1b[2K');
 
 async function cmdDevices() {
   log.info(`Платформа: ${os.platform()}`);
-  const ios = await detectIosDevices();
-  if (ios.length) {
-    log.ok(`Найдены устройства Apple: ${ios.map((d) => `${d.name} (${d.udid})`).join(', ')}`);
+  const phones = await detectPhones();
+  if (phones.length) {
+    log.ok(`Подключены телефоны: ${phones.map((d) => `${d.name} (${d.udid ?? d.serial})`).join(', ')}`);
   } else {
-    log.info('libimobiledevice не видит подключённых устройств (или не установлен).');
+    log.info('Телефонов по кабелю не видно. Для iPhone нужен libimobiledevice, для Android — adb.');
   }
 
   const mounts = await listMountPoints();
@@ -78,7 +78,7 @@ async function cmdDevices() {
 
   for (const m of mounts) {
     const info = await inspectMount(m);
-    const tag = info.looksLikeIPhone ? 'iPhone/камера' : info.hasDcim ? 'есть DCIM' : '';
+    const tag = info.looksLikeIPhone ? 'iPhone' : info.looksLikeAndroid ? 'Android' : info.hasDcim ? 'есть DCIM' : '';
     log.plain(`  ${m}${tag ? `  ← ${tag}` : ''}${info.sample.length ? `  [${info.sample.join(', ')}]` : ''}`);
   }
 

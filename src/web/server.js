@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, sqliteDriver, stats } from '../db.js';
-import { detectIosDevices, inspectMount, listMountPoints, mountHint } from '../devices.js';
+import { detectPhones, inspectMount, listMountPoints, mountHint } from '../devices.js';
 import { log, humanSize } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
@@ -429,7 +429,7 @@ const routes = {
   'GET /api/devices': async () => {
     const mounts = [];
     for (const m of await listMountPoints()) mounts.push(await inspectMount(m));
-    return { mounts, ios: await detectIosDevices(), hint: mountHint() };
+    return { mounts, phones: await detectPhones(), hint: mountHint() };
   },
 
   'POST /api/browse': async (body) => listDirectories(body?.path),

@@ -110,6 +110,29 @@ async function fromVideoAtoms(absPath) {
   return null;
 }
 
+/* ── Google Takeout: рядом с файлом лежит .json с датой съёмки ───────────── */
+
+async function fromTakeoutSidecar(absPath) {
+  const ext = path.extname(absPath);
+  const candidates = [
+    `${absPath}.json`,
+    `${absPath}.supplemental-metadata.json`,
+    absPath.slice(0, -ext.length) + '.json',
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const meta = JSON.parse(await fsp.readFile(candidate, 'utf8'));
+      const seconds = meta?.photoTakenTime?.timestamp ?? meta?.creationTime?.timestamp;
+      const ms = Number(seconds) * 1000;
+      if (plausible(ms)) return ms;
+    } catch {
+      // файла нет или он не про это — идём дальше
+    }
+  }
+  return null;
+}
+
 /* ── Имя файла: IMG_20230715_123456, 2023-07-15 14.32.11, PXL_20230715… ──── */
 
 const NAME_RE =
@@ -154,6 +177,10 @@ export async function detectCaptureDate(absPath, stat) {
     const atom = await fromVideoAtoms(absPath);
     if (atom) return { takenAt: atom, source: 'video', camera };
   }
+
+  // Выгрузка Google Photos часто теряет EXIF, но кладёт рядом .json с датой
+  const takeout = await fromTakeoutSidecar(absPath);
+  if (takeout) return { takenAt: takeout, source: 'takeout', camera };
 
   const byName = fromFileName(absPath);
   if (byName) return { takenAt: byName, source: 'filename', camera };

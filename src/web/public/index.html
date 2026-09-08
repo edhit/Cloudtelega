@@ -16,10 +16,15 @@
         <div class="brand-sub">Настройка хранилища</div>
       </div>
     </div>
-    <div class="profile-bar">
-      <select id="profileSelect" title="Профиль: у каждого свой бот, группа и архив"></select>
-      <button class="btn" id="newProfile" title="Новый профиль">+</button>
+    <div class="accounts">
+      <div class="side-title">Профили</div>
+      <ul class="account-list" id="profileList"></ul>
+      <button class="account account-add" id="newProfile">
+        <span class="account-avatar plus">+</span>
+        <span class="account-text"><b>Добавить профиль</b></span>
+      </button>
     </div>
+    <div class="side-title">Настройка</div>
     <ul class="nav" id="nav">
       <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
       <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
@@ -31,7 +36,7 @@
       <li><button data-pane="archive"><span class="nav-num" data-num>8</span><span class="nav-label">База отправленного</span></button></li>
     </ul>
     <div class="sidebar-foot">
-      Всё, что вы вводите, сохраняется только на этом компьютере — в файл <span class="chip">.env</span> рядом с программой. Никуда больше данные не уходят.
+      Всё, что вы вводите, сохраняется только на этом компьютере — в файл настроек рядом с программой. Никуда больше данные не уходят.
     </div>
   </aside>
 
@@ -39,13 +44,13 @@
 
     <!-- ── 1. Начало ─────────────────────────────────────────────────── -->
     <section class="pane active" id="pane-start">
-      <h1>Ваш личный «iCloud» в Telegram</h1>
-      <p class="lead">Программа находит на диске или на iPhone все фото и видео и складывает их в ваш приватный канал в Telegram. Место не ограничено, платить не нужно. Настройка занимает минут десять — я проведу вас по шагам.</p>
+      <h1>Личное облако для фото и видео</h1>
+      <p class="lead">Программа находит на диске или на телефоне — iPhone или Android — все фото и видео и складывает их в вашу приватную группу в Telegram. Место не ограничено, платить не нужно. Настройка занимает минут десять — я проведу вас по шагам.</p>
 
       <div class="group-title">Что понадобится</div>
       <div class="group">
         <div class="row"><div class="row-label"><b>Телефон с Telegram</b><small>Понадобится, чтобы создать бота и получить код входа</small></div></div>
-        <div class="row"><div class="row-label"><b>Фото и видео на этом компьютере</b><small>Внешний диск, папка с выгрузкой из iCloud или подключённый iPhone</small></div></div>
+        <div class="row"><div class="row-label"><b>Фото и видео на этом компьютере</b><small>Внешний диск, выгрузка из iCloud или Google Photos, подключённый iPhone или Android</small></div></div>
         <div class="row"><div class="row-label"><b>Минут десять времени</b><small>Каждый шаг проверяется сразу, вслепую ничего делать не придётся</small></div></div>
       </div>
 
@@ -220,14 +225,14 @@
     <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
     <section class="pane" id="pane-folders">
       <h1>Шаг 4. Что отправлять</h1>
-      <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со всеми вложенными папками и сама отберёт медиафайлы, включая HEIC с iPhone.</p>
+      <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со вложенными папками и сама отберёт медиафайлы: HEIC с iPhone, JPEG и MP4 с Android, RAW с фотоаппарата.</p>
 
       <div class="group-title">Выбранные папки</div>
       <div class="group" style="padding: 14px 16px">
         <div class="pathlist" id="pathList"></div>
         <div class="btn-row">
           <button class="btn" id="addPath">Добавить папку…</button>
-          <button class="btn" id="findDisks">Показать диски и iPhone</button>
+          <button class="btn" id="findDisks">Показать диски и телефоны</button>
         </div>
       </div>
 
@@ -267,7 +272,7 @@
           <label class="switch"><input type="checkbox" id="keepHeic"><span></span></label>
         </div>
         <div class="row">
-          <div class="row-label"><b>Live Photo</b><small>Кадр и его короткое видео уходят одним живым снимком</small></div>
+          <div class="row-label"><b>Живые снимки</b><small>Live Photo с iPhone и Motion Photo с Android уходят одним живым снимком</small></div>
           <div class="seg" id="segLive">
             <label><input type="radio" name="live" value="live" checked><span>Живыми</span></label>
             <label><input type="radio" name="live" value="send"><span>Раздельно</span></label>

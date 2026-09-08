@@ -95,34 +95,77 @@ function markDone(pane, done) {
 
 /* ── профили ─────────────────────────────────────────────────────────────── */
 
-function renderProfiles() {
-  const select = $('#profileSelect');
-  select.innerHTML = '';
-  for (const p of state.profiles ?? []) {
-    const option = document.createElement('option');
-    option.value = p.name;
-    option.textContent = p.configured ? p.name : `${p.name} (не настроен)`;
-    option.selected = p.name === state.profile;
-    select.append(option);
-  }
+/** Цвет кружка выводим из имени — у каждого профиля свой, но всегда один и тот же. */
+function hueOf(name) {
+  let hash = 0;
+  for (const ch of String(name)) hash = (hash * 31 + ch.codePointAt(0)) % 360;
+  return hash;
 }
 
-$('#profileSelect').addEventListener('change', (e) => guard(null, async () => {
-  const name = e.target.value;
+async function switchProfile(name) {
   state = await api('/api/profiles/switch', { name });
   captionSamples = null;
+  archiveOffset = 0;
   await refresh();
   toast(`Профиль: ${name}`);
   show('start');
-}));
+}
 
-$('#newProfile').addEventListener('click', (e) => guard(e.target, async () => {
+function renderProfiles() {
+  const list = $('#profileList');
+  list.innerHTML = '';
+
+  for (const p of state.profiles ?? []) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.className = 'account';
+    btn.setAttribute('aria-current', String(p.active));
+
+    const label = p.name === 'default' ? 'Основной' : p.name;
+
+    const avatar = document.createElement('span');
+    avatar.className = 'account-avatar';
+    avatar.style.setProperty('--h', hueOf(p.name));
+    avatar.textContent = label.slice(0, 1);
+
+    const text = document.createElement('span');
+    text.className = 'account-text';
+    const title = document.createElement('b');
+    title.textContent = label;
+    const sub = document.createElement('small');
+    sub.textContent = p.configured ? 'настроен' : 'не настроен';
+    text.append(title, sub);
+
+    btn.append(avatar, text);
+
+    if (!p.active && p.name !== 'default') {
+      const del = document.createElement('span');
+      del.className = 'account-del';
+      del.textContent = '×';
+      del.title = 'Удалить профиль';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        guard(null, async () => {
+          if (!confirm(`Удалить профиль «${p.name}»? Его настройки и база отправленного будут стёрты. Сообщения в Telegram останутся.`)) return;
+          await api('/api/profiles/delete', { name: p.name });
+          await refresh();
+          toast(`Профиль «${p.name}» удалён`);
+        });
+      });
+      btn.append(del);
+    }
+
+    if (!p.active) btn.addEventListener('click', () => guard(null, () => switchProfile(p.name)));
+    li.append(btn);
+    list.append(li);
+  }
+}
+
+$('#newProfile').addEventListener('click', () => guard(null, async () => {
   const name = prompt('Имя профиля — например, имя человека, чей это архив:');
   if (!name) return;
   await api('/api/profiles/create', { name });
-  state = await api('/api/profiles/switch', { name });
-  captionSamples = null;
-  await refresh();
+  await switchProfile(name);
   toast(`Профиль «${name}» создан — настройте его с первого шага`);
   show('bot');
 }));
@@ -359,18 +402,20 @@ function addPath(p) {
 }
 
 async function loadDevices() {
-  const { mounts, ios, hint } = await api('/api/devices');
+  const { mounts, phones, hint } = await api('/api/devices');
   const box = $('#disks');
   box.innerHTML = '';
 
   const group = document.createElement('div');
   group.className = 'group';
 
-  if (ios.length) {
+  for (const phone of phones ?? []) {
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = '<div class="row-label"><b></b><small>iPhone подключён по кабелю</small></div>';
-    row.querySelector('b').textContent = ios.map((d) => d.name).join(', ');
+    row.innerHTML = '<div class="row-label"><b></b><small></small></div>';
+    row.querySelector('b').textContent = phone.name;
+    row.querySelector('small').textContent =
+      phone.kind === 'android' ? 'Android подключён по кабелю' : 'iPhone подключён по кабелю';
     group.append(row);
   }
 
@@ -380,14 +425,20 @@ async function loadDevices() {
     row.innerHTML = '<div class="row-label"><b class="mono"></b><small></small></div>';
     row.querySelector('b').textContent = m.path;
     row.querySelector('small').textContent = m.looksLikeIPhone
-      ? 'похоже на камеру iPhone'
-      : m.hasDcim
-        ? 'есть папка DCIM'
-        : 'диск или папка';
+      ? 'похоже на iPhone'
+      : m.looksLikeAndroid
+        ? 'похоже на Android'
+        : m.hasDcim
+          ? 'есть папка DCIM'
+          : 'диск или папка';
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
     btn.textContent = 'Выбрать';
-    btn.addEventListener('click', () => addPath(m.dcimPath ?? m.path));
+    btn.addEventListener('click', () => {
+      addPath(m.dcimPath ?? m.path);
+      // На Android снимки из мессенджеров и скриншоты лежат вне DCIM
+      for (const extra of m.extraPaths ?? []) addPath(extra);
+    });
     row.append(btn);
     group.append(row);
   }
@@ -400,8 +451,8 @@ async function loadDevices() {
   if (hint) {
     const note = document.createElement('div');
     note.className = 'note';
-    note.innerHTML = '<b>Как подключить iPhone</b><br><span class="mono"></span>';
-    note.querySelector('.mono').textContent = hint;
+    note.innerHTML = '<b>Как подключить телефон</b><span class="prewrap"></span>';
+    note.querySelector('.prewrap').textContent = hint;
     box.append(note);
   }
 }

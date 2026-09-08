@@ -7,7 +7,7 @@ import {
   fileIdCoverage, getMeta, lastSent, listFailed, listTopics, randomSent,
   resetFailed, searchSent, setMeta, stats,
 } from './db.js';
-import { detectIosDevices, inspectMount, listMountPoints } from './devices.js';
+import { detectPhones, inspectMount, listMountPoints } from './devices.js';
 import { collect, isRunning, requestStop, runSend, sendState } from './pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import {
@@ -209,15 +209,15 @@ async function cmdScanOnly(chatId, arg) {
 }
 
 async function cmdDevices(chatId) {
-  const ios = await detectIosDevices();
+  const phones = await detectPhones();
   const mounts = await listMountPoints();
   const lines = [];
 
-  lines.push(ios.length ? `Apple: ${ios.map((d) => d.name).join(', ')}` : 'Устройств Apple не видно');
+  lines.push(phones.length ? `Телефоны: ${phones.map((d) => d.name).join(', ')}` : 'Телефонов по кабелю не видно');
   lines.push('', 'Смонтировано:');
   for (const m of mounts) {
     const info = await inspectMount(m);
-    const tag = info.looksLikeIPhone ? ' ← iPhone/камера' : info.hasDcim ? ' ← есть DCIM' : '';
+    const tag = info.looksLikeIPhone ? ' ← iPhone' : info.looksLikeAndroid ? ' ← Android' : info.hasDcim ? ' ← есть DCIM' : '';
     lines.push(`  ${m}${tag}`);
   }
   if (!mounts.length) lines.push('  (ничего)');

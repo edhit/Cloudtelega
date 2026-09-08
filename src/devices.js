@@ -25,6 +25,12 @@ async function subdirs(dir) {
   }
 }
 
+/** Точки, куда gvfs монтирует телефоны: mtp:host=… (Android) и afc:host=… (iPhone). */
+async function gvfsMounts() {
+  const base = `/run/user/${typeof process.getuid === 'function' ? process.getuid() : 1000}/gvfs`;
+  return subdirs(base);
+}
+
 /** Кандидаты точек монтирования для текущей ОС. */
 export async function listMountPoints() {
   const platform = os.platform();
@@ -33,6 +39,7 @@ export async function listMountPoints() {
   if (platform === 'darwin') {
     points.push(...(await subdirs('/Volumes')));
   } else if (platform === 'linux') {
+    points.push(...(await gvfsMounts()));
     for (const base of ['/media', '/run/media', '/mnt']) {
       for (const d of await subdirs(base)) {
         // /media/<user>/<label> — заглядываем на уровень глубже
@@ -58,9 +65,21 @@ export async function listMountPoints() {
   return [...new Set(points)];
 }
 
-/** Похоже ли содержимое на камеру iPhone (DCIM/100APPLE и т.п.). */
+/**
+ * Что за устройство перед нами: iPhone раскладывает снимки по папкам 100APPLE,
+ * Android — в DCIM/Camera (плюс Pictures и Movies рядом).
+ */
 export async function inspectMount(mount) {
-  const info = { path: mount, hasDcim: false, looksLikeIPhone: false, dcimPath: null, sample: [] };
+  const info = {
+    path: mount,
+    hasDcim: false,
+    looksLikeIPhone: false,
+    looksLikeAndroid: false,
+    dcimPath: null,
+    extraPaths: [],
+    sample: [],
+  };
+
   const dcim = path.join(mount, 'DCIM');
   if (await exists(dcim)) {
     info.hasDcim = true;
@@ -68,7 +87,21 @@ export async function inspectMount(mount) {
     const dirs = await subdirs(dcim);
     info.sample = dirs.slice(0, 5).map((d) => path.basename(d));
     info.looksLikeIPhone = dirs.some((d) => /\d{3}(APPLE|CLOUD)/i.test(path.basename(d)));
+    info.looksLikeAndroid = dirs.some((d) => /^(Camera|Screenshots|100ANDRO|OpenCamera)$/i.test(path.basename(d)));
   }
+
+  // На Android снимки из мессенджеров и скриншоты лежат вне DCIM
+  for (const extra of ['Pictures', 'Movies', 'Download']) {
+    const p = path.join(mount, extra);
+    if (await exists(p)) {
+      info.extraPaths.push(p);
+      if (extra !== 'Download') info.looksLikeAndroid = true;
+    }
+  }
+
+  if (/mtp:host=/i.test(mount)) info.looksLikeAndroid = true;
+  if (/afc:host=/i.test(mount)) info.looksLikeIPhone = true;
+
   return info;
 }
 
@@ -94,29 +127,69 @@ export async function detectIosDevices() {
   }
 }
 
+/** Android по кабелю: adb показывает устройство, даже когда MTP не смонтирован. */
+export async function detectAndroidDevices() {
+  try {
+    const { stdout } = await exec('adb', ['devices', '-l'], { timeout: 5000 });
+    return stdout
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('*') && / device\b/.test(line))
+      .map((line) => {
+        const [serial] = line.split(/\s+/);
+        const model = /model:(\S+)/.exec(line)?.[1]?.replace(/_/g, ' ');
+        return { serial, name: model || 'Android', kind: 'android' };
+      });
+  } catch {
+    return []; // adb не установлен или устройство не подключено
+  }
+}
+
+/** Все подключённые телефоны: и Apple, и Android. */
+export async function detectPhones() {
+  const [apple, android] = await Promise.all([detectIosDevices(), detectAndroidDevices()]);
+  return [...apple.map((d) => ({ ...d, kind: 'ios' })), ...android];
+}
+
 export function mountHint() {
   const platform = os.platform();
+
   if (platform === 'darwin') {
     return [
-      'macOS: iPhone не монтируется как диск. Варианты:',
-      '  1) Image Capture (Захват изображений) → выгрузить DCIM в папку → указать её в SCAN_PATHS;',
-      '  2) brew install libimobiledevice ifuse && ifuse ~/iphone → SCAN_PATHS=~/iphone/DCIM',
+      'iPhone на macOS не монтируется как флешка:',
+      '  • «Захват изображений» (Image Capture) → выгрузить всё в папку → указать её здесь;',
+      '  • или brew install libimobiledevice ifuse, затем ifuse ~/iphone → ~/iphone/DCIM',
+      '',
+      'Android на macOS: Finder телефон не показывает, нужен посредник:',
+      '  • приложение Android File Transfer (или OpenMTP) → скопировать DCIM в папку;',
+      '  • или brew install android-platform-tools, затем adb pull /sdcard/DCIM ~/android-photos',
     ].join('\n');
   }
+
   if (platform === 'linux') {
     return [
-      'Linux: sudo apt install libimobiledevice6 libimobiledevice-utils ifuse',
-      '  idevicepair pair && mkdir -p ~/iphone && ifuse ~/iphone',
-      '  затем SCAN_PATHS=~/iphone/DCIM (размонтировать: fusermount -u ~/iphone)',
-      'Либо GVFS-монтирование: /run/user/1000/gvfs/afc:host=<UDID>/DCIM',
+      'iPhone: sudo apt install libimobiledevice6 libimobiledevice-utils ifuse',
+      '  idevicepair pair && mkdir -p ~/iphone && ifuse ~/iphone   (отключить: fusermount -u ~/iphone)',
+      '',
+      'Android: телефон обычно сам появляется в файловом менеджере (MTP) —',
+      '  тогда путь вида /run/user/1000/gvfs/mtp:host=… программа найдёт сама.',
+      '  Если нет: sudo apt install android-tools-adb, включить «Отладку по USB»,',
+      '  затем adb pull /sdcard/DCIM ~/android-photos',
+      '',
+      'На телефоне при подключении выберите режим «Передача файлов» (MTP), а не «Только зарядка».',
     ].join('\n');
   }
+
   if (platform === 'win32') {
     return [
-      'Windows: iPhone виден как MTP-устройство «Apple iPhone» — Node не читает MTP напрямую.',
-      '  Скопируйте DCIM в обычную папку (Проводник → Этот компьютер → Apple iPhone → Internal Storage → DCIM)',
-      '  и укажите путь в SCAN_PATHS.',
+      'И iPhone, и Android Windows показывает как MTP-устройство — напрямую Node их не читает.',
+      '  Проводник → «Этот компьютер» → ваш телефон → Internal Storage → DCIM,',
+      '  скопируйте папку на диск и укажите её здесь.',
+      'На телефоне разрешите доступ: iPhone — «Доверять этому компьютеру»,',
+      'Android — режим подключения «Передача файлов» (MTP).',
     ].join('\n');
   }
+
   return '';
 }
