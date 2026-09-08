@@ -9,6 +9,7 @@ import {
 } from './db.js';
 import { detectPhones, inspectMount, listMountPoints } from './devices.js';
 import { collect, isRunning, requestStop, runSend, sendState } from './pipeline.js';
+import { messageLink } from './links.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import {
   copyMessage, editMessageText, getUpdates, sendByFileId, sendLivePhotoByFileId,
@@ -80,13 +81,6 @@ async function rootsFrom(arg) {
 }
 
 /* ── вспомогательное ─────────────────────────────────────────────────────── */
-
-/** Ссылка на сообщение в приватном канале/супергруппе. */
-function messageLink(row) {
-  const chat = String(row.chat_id ?? config.chatId);
-  if (!chat.startsWith('-100') || !row.message_id) return null;
-  return `https://t.me/c/${chat.slice(4)}/${row.message_id}`;
-}
 
 function describe(row) {
   const when = row.taken_at ? formatDate(row.taken_at) : '—';

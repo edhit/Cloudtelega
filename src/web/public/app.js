@@ -565,7 +565,19 @@ function appendArchiveRows(rows) {
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = '<div class="row-label"><b></b><small></small></div><span class="pill"></span>';
-    row.querySelector('b').textContent = r.rel_path || r.name;
+
+    const title = row.querySelector('b');
+    if (r.link) {
+      // Ссылка строится из уже сохранённых chat_id и message_id — открывается само сообщение
+      const a = document.createElement('a');
+      a.href = r.link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = r.rel_path || r.name;
+      title.append(a);
+    } else {
+      title.textContent = r.rel_path || r.name;
+    }
     const when = r.taken_at ? new Date(r.taken_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
     row.querySelector('small').textContent =
       `${when} · ${humanSize(r.size)}${r.message_id ? ` · сообщение ${r.message_id}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
@@ -573,6 +585,16 @@ function appendArchiveRows(rows) {
     const badge = row.querySelector('.pill');
     badge.className = `pill ${cls}`;
     badge.textContent = text;
+
+    if (r.link) {
+      const open = document.createElement('a');
+      open.className = 'tg-link';
+      open.href = r.link;
+      open.target = '_blank';
+      open.rel = 'noopener';
+      open.textContent = 'открыть ↗';
+      row.append(open);
+    }
     box.append(row);
   }
   archiveOffset += rows.length;
@@ -588,11 +610,47 @@ function updateArchiveFooter() {
     : '';
 }
 
+function archiveFilter() {
+  return {
+    query: $('#archiveSearch')?.value.trim() ?? '',
+    status: $('#segArchiveStatus input:checked')?.value ?? '',
+  };
+}
+
 async function loadMoreArchive() {
-  const page = await api('/api/archive/rows', { offset: archiveOffset, limit: 100 });
+  const page = await api('/api/archive/rows', { offset: archiveOffset, limit: 100, ...archiveFilter() });
   archiveTotal = page.total;
   appendArchiveRows(page.rows);
 }
+
+/** Перезапрашивает список с нуля — при поиске и смене фильтра. */
+async function reloadArchiveRows() {
+  const { query, status } = archiveFilter();
+  const page = await api('/api/archive/rows', { offset: 0, limit: 100, query, status });
+
+  const box = $('#archiveRows');
+  box.innerHTML = '';
+  archiveOffset = 0;
+  archiveTotal = page.total;
+
+  if (!page.rows.length) {
+    box.innerHTML = '<div class="row"><div class="row-label"><b>Ничего не нашлось</b><small>Попробуйте другое слово или уберите фильтр</small></div></div>';
+    updateArchiveFooter();
+  } else {
+    appendArchiveRows(page.rows);
+  }
+
+  $('#archiveRowsTitle').textContent = query || status
+    ? `Найдено записей: ${archiveTotal}`
+    : `Что внутри · всего записей ${archiveTotal}`;
+}
+
+let searchTimer = null;
+$('#archiveSearch').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => guard(null, reloadArchiveRows), 300);
+});
+$$('#segArchiveStatus input').forEach((i) => i.addEventListener('change', () => guard(null, reloadArchiveRows)));
 
 async function loadArchive() {
   const a = await api('/api/archive').catch((err) => {

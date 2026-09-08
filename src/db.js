@@ -360,6 +360,45 @@ export function countFiles() {
   return Number(openDb().prepare('SELECT COUNT(*) n FROM files').get()?.n ?? 0);
 }
 
+/**
+ * Поиск по архиву с постраничной выдачей.
+ * LIKE в SQLite различает регистр за пределами латиницы, поэтому ищем сразу
+ * по нескольким написаниям запроса.
+ */
+export function searchFiles({ query = '', status = '', limit = 100, offset = 0 } = {}) {
+  const size = Math.max(1, Math.min(500, Number(limit) || 100));
+  const from = Math.max(0, Number(offset) || 0);
+
+  const where = [];
+  const params = [];
+
+  const q = String(query).trim();
+  if (q) {
+    const variants = [...new Set([q, q.toLowerCase(), q.toUpperCase(), q[0].toUpperCase() + q.slice(1).toLowerCase()])];
+    const clauses = variants.map(() => '(name LIKE ? OR rel_path LIKE ?)');
+    where.push(`(${clauses.join(' OR ')})`);
+    for (const v of variants) params.push(`%${v}%`, `%${v}%`);
+  }
+
+  if (status) {
+    where.push('status = ?');
+    params.push(status);
+  }
+
+  const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const d = openDb();
+  const total = Number(d.prepare(`SELECT COUNT(*) n FROM files ${filter}`).get(...params)?.n ?? 0);
+  const rows = d
+    .prepare(
+      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, topic_id,
+              file_type, last_error
+         FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, size, from);
+
+  return { rows, total, offset: from, limit: size };
+}
+
 /** Сколько отправленного мы можем переиспользовать по file_id. */
 export function fileIdCoverage() {
   return openDb()

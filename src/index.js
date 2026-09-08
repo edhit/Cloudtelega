@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { config, ensureDirs, assertChat, heicMode, livePhotoMode, pairPrefer, BOT_UPLOAD_LIMIT } from './config.js';
 import { log, humanSize } from './logger.js';
-import { closeDb, fileIdCoverage, listFailed, listTopics, resetFailed, sqliteDriver, stats } from './db.js';
+import { closeDb, fileIdCoverage, listFailed, listTopics, resetFailed, searchFiles, sqliteDriver, stats } from './db.js';
+import { messageLink } from './links.js';
 import { summarize } from './scanner.js';
 import { formatDate } from './dates.js';
 import { detectPhones, inspectMount, listMountPoints, mountHint } from './devices.js';
@@ -161,6 +162,29 @@ async function cmdSend(args) {
       },
     },
   });
+}
+
+function cmdFind(args) {
+  const query = args._.slice(1).join(' ').trim();
+  if (!query) {
+    log.error('Что искать? Например: npm run start -- find IMG_0373');
+    process.exitCode = 1;
+    return;
+  }
+
+  const { rows, total } = searchFiles({ query, limit: Number(args.limit) || 20 });
+  if (!total) {
+    log.info(`Ничего не нашлось по «${query}»`);
+    return;
+  }
+
+  log.ok(`Найдено: ${total}${total > rows.length ? `, показываю ${rows.length}` : ''}`);
+  for (const row of rows) {
+    const when = row.taken_at ? formatDate(row.taken_at) : '—';
+    const link = messageLink(row);
+    log.plain(`  ${when}  ${row.rel_path || row.name}  ${humanSize(row.size)}  [${row.status}]`);
+    if (link) log.plain(`      ${link}`);
+  }
 }
 
 function cmdProfiles() {
@@ -329,6 +353,7 @@ cloudtelega — Telegram как облачное хранилище для фо�
   npm run start -- cleanup         найти лишние видео Live Photo в архиве
                                    (--yes — удалить эти сообщения)
   npm run start -- profiles        список профилей (у каждого свой архив)
+  npm run start -- find <текст>    найти в архиве + ссылки на сообщения
 
 Опции:
   --path=/Volumes/USB      каталог для сканирования (можно повторять)
@@ -360,6 +385,7 @@ async function main() {
       case 'retry': await cmdRetry(args); break;
       case 'cleanup': await cmdCleanup(args); break;
       case 'profiles': cmdProfiles(); break;
+      case 'find': cmdFind(args); break;
       case 'check': await cmdCheck(); break;
       default: usage(); break;
     }

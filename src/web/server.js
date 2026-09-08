@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
 import { envExists, envPath, updateEnv } from '../env.js';
-import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, sqliteDriver, stats } from '../db.js';
+import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, searchFiles, sqliteDriver, stats } from '../db.js';
+import { messageLink } from '../links.js';
 import { detectPhones, inspectMount, listMountPoints, mountHint } from '../devices.js';
 import { log, humanSize } from '../logger.js';
 import { buildCaption } from '../caption.js';
@@ -220,6 +221,9 @@ async function detectChats() {
   return [...found.values()];
 }
 
+/** К каждой записи добавляем ссылку на сообщение в Telegram. */
+const withLinks = (rows) => rows.map((row) => ({ ...row, link: messageLink(row) }));
+
 /** Пример сообщения во всех вариантах подписи — чтобы выбирать глазами, а не наугад. */
 function captionSamples() {
   const sample = {
@@ -374,11 +378,13 @@ const routes = {
   },
 
   'POST /api/archive/rows': async (body) => {
-    const limit = Math.max(1, Math.min(500, Number(body?.limit) || 100));
-    const offset = Math.max(0, Number(body?.offset) || 0);
-    const rows = listFiles({ limit, offset });
-    const total = countFiles();
-    return { rows, total, offset, limit, hasMore: offset + rows.length < total };
+    const page = searchFiles({
+      query: body?.query ?? '',
+      status: ['sent', 'failed', 'skipped', 'pending'].includes(body?.status) ? body.status : '',
+      limit: body?.limit,
+      offset: body?.offset,
+    });
+    return { ...page, rows: withLinks(page.rows), hasMore: page.offset + page.rows.length < page.total };
   },
 
   'GET /api/archive': async () => {
@@ -402,7 +408,7 @@ const routes = {
       fileIds: fileIdCoverage(),
       topics: listTopics(config.chatId),
       // Первая страница едет сразу, остальные подтягиваются по мере надобности
-      page: { rows: listFiles({ limit: 100, offset: 0 }), total: countFiles(), offset: 0, limit: 100 },
+      page: { rows: withLinks(listFiles({ limit: 100, offset: 0 })), total: countFiles(), offset: 0, limit: 100 },
     };
   },
   'POST /api/detect-chats': async () => ({ chats: await detectChats() }),
