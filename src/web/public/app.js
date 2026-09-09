@@ -46,6 +46,7 @@ function openModal({ title, text = '', icon = null, okText = 'Готово', can
     $('#modalIcon').hidden = !icon;
     $('#modalOk').textContent = okText;
     $('#modalOk').className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+    $('#modalOk').hidden = !okText;
     $('#modalCancel').textContent = cancelText;
     $('#modalCancel').hidden = !cancelText;
 
@@ -63,7 +64,9 @@ function openModal({ title, text = '', icon = null, okText = 'Готово', can
     $('#modalCancel').onclick = () => closeModal(null);
 
     $('#modal').hidden = false;
-    setTimeout(() => (focusTarget ?? $('#modalOk')).focus?.(), 60);
+    // Кнопки «Готово» может не быть (список для выбора) — тогда фокус на «Закрыть»
+    const fallback = okText ? $('#modalOk') : $('#modalCancel');
+    setTimeout(() => (focusTarget ?? fallback).focus?.(), 60);
   });
 }
 
@@ -258,6 +261,28 @@ function markDone(pane, done) {
 
 /* ── чипы: показываем имена, а не технические идентификаторы ─────────────── */
 
+/**
+ * Кружок с буквой, поверх которого ложится фото, если оно есть.
+ * Фото приходит прямо из Telegram и нигде не сохраняется — не загрузилось,
+ * значит остаётся буква.
+ */
+function makeAvatar({ key, letter, photo, className = 'chip-avatar' }) {
+  const avatar = document.createElement('span');
+  avatar.className = className;
+  avatar.style.setProperty('--h', hueOf(key ?? letter ?? '?'));
+  avatar.textContent = (letter ?? '?').replace(/^@/, '').slice(0, 1);
+
+  if (photo) {
+    const img = document.createElement('img');
+    img.src = photo;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => img.remove());
+    avatar.append(img);
+  }
+  return avatar;
+}
+
 function renderChips(box, items, { empty = 'Пока никого', onRemove } = {}) {
   box.innerHTML = '';
   if (!items.length) {
@@ -273,10 +298,7 @@ function renderChips(box, items, { empty = 'Пока никого', onRemove } =
     chip.className = 'chip-item';
     chip.title = item.title ?? '';
 
-    const avatar = document.createElement('span');
-    avatar.className = 'chip-avatar';
-    avatar.style.setProperty('--h', hueOf(item.id ?? item.label));
-    avatar.textContent = (item.label ?? '?').slice(0, 1);
+    const avatar = makeAvatar({ key: item.id ?? item.label, letter: item.title ?? item.label, photo: item.photo });
 
     const text = document.createElement('span');
     text.className = 'chip-text';
@@ -301,8 +323,8 @@ function pickFromList({ title, text, items, empty }) {
   return openModal({
     title,
     text,
-    okText: 'Закрыть',
-    cancelText: '',
+    okText: '',
+    cancelText: 'Закрыть',
     build: (body) => {
       const list = document.createElement('div');
       list.className = 'picker';
@@ -316,10 +338,7 @@ function pickFromList({ title, text, items, empty }) {
 
       for (const item of items) {
         const btn = document.createElement('button');
-        const avatar = document.createElement('span');
-        avatar.className = 'chip-avatar';
-        avatar.style.setProperty('--h', hueOf(item.id ?? item.label));
-        avatar.textContent = (item.label ?? '?').slice(0, 1);
+        const avatar = makeAvatar({ key: item.id ?? item.label, letter: item.label, photo: item.photo });
 
         const wrap = document.createElement('span');
         const b = document.createElement('b');
@@ -458,7 +477,12 @@ async function refresh() {
   $('#topicYear').checked = s.topicMode === 'year';
   $('#apiId').value = s.apiId || '';
   if (s.apiHashSet) $('#apiHash').placeholder = s.apiHash;
-  admins = (s.admins ?? []).map((a) => ({ id: a.id, label: a.name, sub: a.username ? `@${a.username}` : '' }));
+  admins = (s.admins ?? []).map((a) => ({
+    id: a.id,
+    label: a.username ? `@${a.username}` : a.name,
+    title: a.name,
+    photo: `/api/user-photo?id=${encodeURIComponent(a.id)}`,
+  }));
   renderAdminChips();
 
   $$('#segSend input').forEach((i) => { i.checked = i.value === (s.sendAsDocument ? 'doc' : 'feed'); });
@@ -551,37 +575,29 @@ $('#createGroup').addEventListener('click', (e) => guard(e.target, async () => {
 
 $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
   const { chats } = await api('/api/detect-chats', {});
-  const box = $('#chatCandidates');
-  box.innerHTML = '';
 
-  if (!chats.length) {
-    box.hidden = true;
-    throw new Error('Пока ничего не вижу. Добавьте бота администратором в канал и напишите там любое сообщение');
-  }
+  const picked = await pickFromList({
+    title: 'Ваши группы и каналы',
+    text: 'Показываю то, куда добавлен ваш бот. Если нужного нет — напишите там любое сообщение и откройте список снова.',
+    items: chats.map((chat) => ({
+      id: chat.id,
+      label: chat.title,
+      sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : null].filter(Boolean).join(' · '),
+      photo: chat.photo ? `/api/thumb?file=${encodeURIComponent(chat.photo)}` : null,
+      isForum: chat.isForum,
+    })),
+    empty: 'Пока ничего не вижу. Добавьте бота администратором в группу, напишите там любое сообщение и попробуйте снова.',
+  });
 
-  for (const chat of chats) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `<div class="row-label"><b></b><small></small></div>`;
-    row.querySelector('b').textContent = chat.title;
-    row.querySelector('small').textContent =
-      `${chat.type === 'channel' ? 'канал' : 'группа'}${chat.isForum ? ' с темами' : ''} · ${chat.id}`;
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary';
-    btn.textContent = 'Выбрать';
-    btn.addEventListener('click', () => guard(btn, async () => {
-      await api('/api/settings', {
-        TELEGRAM_CHAT_ID: chat.id,
-        TOPIC_MODE: chat.isForum && $('#topicYear').checked ? 'year' : 'none',
-      });
-      await refresh();
-      toast(`Выбрана «${chat.title}»`);
-      await checkChat();
-    }));
-    row.append(btn);
-    box.append(row);
-  }
-  box.hidden = false;
+  if (!picked) return;
+
+  await api('/api/settings', {
+    TELEGRAM_CHAT_ID: picked.id,
+    TOPIC_MODE: picked.isForum && $('#topicYear').checked ? 'year' : 'none',
+  });
+  await refresh();
+  toast(`Выбрана «${picked.label}»`);
+  await checkChat();
 }));
 
 async function checkChat() {
@@ -842,26 +858,40 @@ async function saveAdmins() {
 
 $('#detectOwner').addEventListener('click', (e) => guard(e.target, async () => {
   const { owners } = await api('/api/detect-owner', {});
+  const source = {
+    account: 'ваш аккаунт',
+    group: 'участник группы',
+    bot: 'писал вашему боту',
+  };
+
   const candidates = owners
     .filter((o) => !admins.some((a) => a.id === o.id))
     .map((o) => ({
       id: o.id,
-      label: o.name,
-      sub: o.source === 'account' ? 'ваш аккаунт Telegram' : o.username ? `@${o.username}` : 'писал вашему боту',
+      label: o.username ? `@${o.username}` : o.name,
+      username: o.username ?? null,
+      name: o.name,
+      sub: [o.username ? o.name : null, source[o.source]].filter(Boolean).join(' · '),
+      photo: `/api/user-photo?id=${encodeURIComponent(o.id)}`,
     }));
 
   const picked = await pickFromList({
     title: 'Кто может командовать ботом',
-    text: 'Покажу тех, кого узнал. Если нужного человека нет — попросите его написать вашему боту любое сообщение и откройте список снова.',
+    text: 'Участники вашей группы и те, кто писал боту. Если нужного человека нет — попросите его написать боту любое сообщение и откройте список снова.',
     items: candidates,
-    empty: 'Пока никого не нашлось. Напишите боту в Telegram любое сообщение и попробуйте ещё раз.',
+    empty: 'Пока никого не нашлось. Попросите человека написать вашему боту любое сообщение и попробуйте ещё раз.',
   });
 
   if (!picked) return;
-  admins.push({ id: picked.id, label: picked.label, sub: picked.sub });
+  admins.push({
+    id: picked.id,
+    label: picked.username ? `@${picked.username}` : picked.name,
+    title: picked.name,
+    photo: picked.photo,
+  });
   renderAdminChips();
   await saveAdmins();
-  toast(`${picked.label} теперь может командовать ботом`);
+  toast(`${picked.name} теперь может командовать ботом`);
 }));
 
 /* ── превью подписи ──────────────────────────────────────────────────────── */
@@ -1006,27 +1036,37 @@ let profileData = null;
 async function loadProfile() {
   profileData = await api('/api/profile');
   const p = profileData;
-  const label = p.displayName || p.telegram?.name || (p.name === 'default' ? 'Основной' : p.name);
+  // Вход есть — значит обновлять есть откуда, даже если имя ещё не подтянуто
+  const connected = Boolean(p.accountConnected);
+  const known = p.telegram;
+  const label = p.displayName || known?.name || (p.name === 'default' ? 'Основной' : p.name);
 
   avatarStyle($('#profileAvatar'), { name: p.name, hasAvatar: p.hasAvatar, letter: label });
   $('#profileTitle').textContent = label;
-  $('#profileSub').textContent = p.telegram
-    ? [p.telegram.username ? `@${p.telegram.username}` : null, p.telegram.phone, p.telegram.premium ? 'Premium' : null]
-        .filter(Boolean).join(' · ')
-    : 'Аккаунт Telegram не подключён';
+  $('#profileSub').textContent = known?.username
+    ? `@${known.username}`
+    : connected ? 'Аккаунт Telegram подключён' : 'Аккаунт Telegram не подключён';
   $('#profileLast').textContent = `Последний вход: ${timeAgo(p.lastLoginAt)}`;
+
+  // Пока аккаунт не подключён, обновлять нечего — ведём на шаг входа
+  $('#refreshTelegram').textContent = connected ? 'Обновить из Telegram' : 'Войти в свой Telegram';
+  $('#tgWho').textContent = !connected
+    ? 'Никто — большие файлы отправляться не будут'
+    : known
+      ? [known.username ? `@${known.username}` : known.name, known.premium ? 'Premium' : null]
+          .filter(Boolean).join(' · ')
+      : 'Вход выполнен — нажмите «Обновить из Telegram», чтобы увидеть кто';
+  $('#goAccount').hidden = connected;
 
   $('#displayName').value = p.displayName ?? '';
   $$('#segTheme input').forEach((i) => { i.checked = i.value === p.theme; });
   $$('#segLock input').forEach((i) => { i.checked = i.value === p.lock.type; });
   $('#autoLock').value = p.lock.autoLockMinutes ?? 30;
-  $('#tgFirstName').value = p.telegram?.firstName ?? '';
-  $('#tgLastName').value = p.telegram?.lastName ?? '';
-  $('#tgLimit').textContent = p.telegram
-    ? p.telegram.premium
+  $('#tgLimit').textContent = !connected
+    ? 'до 50 МБ, пока не подключён аккаунт'
+    : known?.premium
       ? 'до 4 ГБ — у аккаунта есть Premium'
-      : 'до 2 ГБ (с Telegram Premium стало бы 4 ГБ)'
-    : 'до 50 МБ, пока не подключён аккаунт';
+      : 'до 2 ГБ (с Telegram Premium стало бы 4 ГБ)';
 
   renderSwatches(p.accent);
   renderWallpapers(p.wallpaper ?? { type: 'none' });
@@ -1080,7 +1120,14 @@ $$('#segTheme input').forEach((i) => i.addEventListener('change', () => guard(nu
   applyStyle(await api('/api/profile', { theme: i.value }));
 })));
 
+$('#goAccount').addEventListener('click', () => show('account'));
+
 $('#refreshTelegram').addEventListener('click', (e) => guard(e.target, async () => {
+  if (!profileData?.accountConnected) {
+    show('account');
+    toast('Войдите в аккаунт — это шаг 3');
+    return;
+  }
   await api('/api/profile/refresh-telegram', {});
   await loadProfile();
   await refresh();
@@ -1097,27 +1144,11 @@ $('#avatarInput').addEventListener('change', () => guard(null, async () => {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-  const alsoTelegram = Boolean(await askConfirm({
-    title: 'Поставить и в Telegram?',
-    text: 'Картинка станет фото вашего профиля в самом Telegram — её увидят все собеседники. Можно только здесь, в программе.',
-    icon: '🖼',
-    okText: 'И в Telegram',
-    cancelText: 'Только здесь',
-  }));
-  await api('/api/profile/avatar', { dataUrl, alsoTelegram });
+  await api('/api/profile/avatar', { dataUrl });
   $('#avatarInput').value = '';
   await loadProfile();
   await refresh();
-  toast(alsoTelegram ? 'Аватар обновлён здесь и в Telegram' : 'Аватар обновлён');
-}));
-
-$('#saveTgName').addEventListener('click', (e) => guard(e.target, async () => {
-  await api('/api/profile/telegram-name', {
-    firstName: $('#tgFirstName').value.trim(),
-    lastName: $('#tgLastName').value.trim(),
-  });
-  await loadProfile();
-  toast('Имя изменено в Telegram');
+  toast('Картинка профиля обновлена');
 }));
 
 $('#saveLock').addEventListener('click', (e) => guard(e.target, async () => {

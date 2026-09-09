@@ -152,7 +152,6 @@
           <div class="btn-row">
             <button class="btn btn-primary" id="detectChat">Найти мою группу</button>
           </div>
-          <div id="chatCandidates" hidden></div>
         </div>
       </div>
 
@@ -393,8 +392,9 @@
       <div class="group-title">Оформление</div>
       <div class="group">
         <div class="row row-stack">
-          <label class="field-label" for="displayName">Как называть профиль в программе</label>
+          <label class="field-label" for="displayName">Имя профиля</label>
           <input type="text" id="displayName" placeholder="Например, Эдуард">
+          <p class="hint">Так профиль называется в этой программе. Имя в самом Telegram меняется в приложении Telegram.</p>
         </div>
         <div class="row">
           <div class="row-label"><b>Тема</b><small>Светлая, тёмная или как в системе</small></div>
@@ -423,17 +423,13 @@
         </div>
       </div>
 
-      <div class="group-title">Аккаунт в Telegram</div>
+      <div class="group-title">Аккаунт Telegram</div>
       <div class="group">
-        <div class="row row-stack">
-          <label class="field-label">Имя и фамилия — изменятся в самом Telegram</label>
-          <div class="grid2">
-            <input type="text" id="tgFirstName" placeholder="Имя">
-            <input type="text" id="tgLastName" placeholder="Фамилия">
-          </div>
-          <div class="btn-row"><button class="btn" id="saveTgName">Изменить в Telegram</button></div>
+        <div class="row"><div class="row-label"><b>Кто вошёл</b><small id="tgWho">—</small></div>
+          <button class="btn" id="goAccount" hidden>Войти</button>
         </div>
         <div class="row"><div class="row-label"><b>Лимит на файл</b><small id="tgLimit">—</small></div></div>
+        <div class="row"><div class="row-label"><b>Имя и фото в Telegram</b><small>Меняются в приложении Telegram — программа их только показывает</small></div></div>
       </div>
 
       <div class="group-title">Кто может войти в профиль</div>

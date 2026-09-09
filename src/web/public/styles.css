@@ -161,7 +161,7 @@ html, body {
 
 /* ── содержимое ──────────────────────────────────────────────────────────── */
 
-.content { flex: 1; min-width: 0; padding: 40px clamp(20px, 5vw, 64px) 80px; }
+.content { flex: 1; min-width: 0; min-height: 100vh; padding: 40px clamp(20px, 5vw, 64px) 80px; }
 .pane { display: none; max-width: 720px; margin: 0 auto; }
 .pane.active { display: block; animation: fade 0.18s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -475,12 +475,13 @@ a { color: var(--accent); }
   padding: 5px 6px 5px 8px; border-radius: 999px;
   background: var(--chip); font-size: 13.5px; max-width: 100%;
 }
-.chip-item .chip-avatar {
-  width: 22px; height: 22px; border-radius: 50%; flex: none;
+.chip-avatar {
+  width: 22px; height: 22px; border-radius: 50%; flex: none; position: relative; overflow: hidden;
   display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #fff;
   background: linear-gradient(160deg, hsl(var(--h, 210) 78% 62%), hsl(var(--h, 210) 72% 48%));
   text-transform: uppercase;
 }
+.chip-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .chip-item .chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-item .chip-x {
   width: 20px; height: 20px; flex: none; border: 0; border-radius: 50%;
@@ -489,13 +490,17 @@ a { color: var(--accent); }
 .chip-item .chip-x:hover { background: var(--red); color: #fff; }
 .chips-empty { color: var(--text-3); font-size: 13px; }
 
-.picker { display: grid; gap: 6px; margin-top: 12px; text-align: left; }
+.picker {
+  display: grid; gap: 6px; margin-top: 12px; text-align: left;
+  max-height: min(52vh, 420px); overflow-y: auto;
+}
 .picker button {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 9px 10px; border: 0; border-radius: 10px;
   background: var(--bg); color: var(--text); font: inherit; cursor: pointer; text-align: left;
 }
 .picker button:hover { background: var(--chip); }
+.picker .chip-avatar { width: 34px; height: 34px; font-size: 14px; }
 .picker b { display: block; font-size: 14px; font-weight: 500; }
 .picker small { display: block; color: var(--text-2); font-size: 12px; }
 
@@ -517,7 +522,7 @@ a { color: var(--accent); }
   background-size: cover; background-position: center; background-attachment: fixed;
 }
 .content.has-wallpaper::before {
-  content: ''; position: fixed; inset: 0; pointer-events: none;
+  content: ''; position: absolute; inset: 0; pointer-events: none;
   background: color-mix(in srgb, var(--bg) 66%, transparent);
 }
 .content .pane { position: relative; z-index: 1; }

@@ -375,32 +375,37 @@ export async function downloadMyAvatar() {
   return buffer && buffer.length ? Buffer.from(buffer) : null;
 }
 
-/** Меняет имя в самом Telegram — это видно всем вашим собеседникам. */
-export async function updateTelegramProfile({ firstName, lastName, about }) {
-  const { Api } = loadGramJs();
-  const c = await getClient();
-  await c.invoke(
-    new Api.account.UpdateProfile({
-      firstName: firstName ?? undefined,
-      lastName: lastName ?? undefined,
-      about: about ?? undefined,
-    }),
-  );
-  return accountInfo();
-}
-
-/** Ставит новое фото профиля в самом Telegram. */
-export async function uploadTelegramPhoto(filePath, fileName, size) {
-  const { Api, CustomFile } = loadGramJs();
-  const c = await getClient();
-  const file = await c.uploadFile({ file: new CustomFile(fileName, size, filePath), workers: 1 });
-  await c.invoke(new Api.photos.UploadProfilePhoto({ file }));
-  return true;
-}
-
 /** Отправляет сообщение самому себе («Избранное») — так приходит код входа. */
 export async function messageSelf(text) {
   const c = await getClient();
   await c.sendMessage('me', { message: text });
   return true;
+}
+
+/* ── участники группы ────────────────────────────────────────────────────── */
+
+/**
+ * Кто состоит в вашей группе. Bot API такого не умеет, а аккаунт — умеет:
+ * из этого списка удобно выбирать, кому доверить команды боту.
+ */
+export async function listGroupMembers(limit = 100) {
+  const c = await getClient();
+  const peer = await resolvePeer();
+  const users = await c.getParticipants(peer, { limit });
+
+  return users
+    .filter((u) => !u.bot && !u.deleted)
+    .map((u) => ({
+      id: String(u.id),
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Без имени',
+      username: u.username ?? null,
+      self: Boolean(u.self),
+    }));
+}
+
+/** Аватар пользователя — отдаём буфером, на диск ничего не пишем. */
+export async function downloadUserPhoto(userId) {
+  const c = await getClient();
+  const buffer = await c.downloadProfilePhoto(Number(userId), { isBig: false });
+  return buffer && buffer.length ? Buffer.from(buffer) : null;
 }

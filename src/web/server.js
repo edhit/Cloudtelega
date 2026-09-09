@@ -19,8 +19,8 @@ import {
 } from '../telegram/botApi.js';
 import {
   accountInfo, cancelWebLogin, createStorageGroup, disconnect as disconnectAccount,
-  downloadMyAvatar, mtprotoConfigured, startWebLogin, submitWebLogin, updateTelegramProfile,
-  uploadTelegramPhoto, webLoginState, whoAmI,
+  downloadMyAvatar, downloadUserPhoto, listGroupMembers, mtprotoConfigured, startWebLogin,
+  submitWebLogin, webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
 import { createProfile, deleteProfile, listProfiles, readProfileEnv, setActiveProfile } from '../profiles.js';
 import {
@@ -36,6 +36,20 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
 };
+
+/**
+ * Кэш картинок держим только в памяти: миниатюры и аватары приходят из Telegram
+ * и не должны засорять диск. При выходе из программы всё исчезает.
+ */
+const MEMORY_THUMB_LIMIT = 400;
+const memoryThumbs = new Map();
+
+function rememberThumb(key, buffer) {
+  memoryThumbs.set(key, buffer);
+  while (memoryThumbs.size > MEMORY_THUMB_LIMIT) {
+    memoryThumbs.delete(memoryThumbs.keys().next().value);
+  }
+}
 
 /* ── фоновая работа (сканирование / отправка) ────────────────────────────── */
 
@@ -328,7 +342,27 @@ async function detectChats() {
       isForum: Boolean(chat.is_forum),
     });
   }
+
+  // Подтягиваем аватар и количество участников — со списком приятнее работать
+  for (const chat of found.values()) {
+    try {
+      const full = await getChat(chat.id);
+      chat.photo = full.photo?.small_file_id ?? null;
+      chat.isForum = Boolean(full.is_forum);
+      chat.description = full.description ?? '';
+    } catch {
+      /* без подробностей тоже сойдёт */
+    }
+  }
+
   return [...found.values()];
+}
+
+/** Убирает прошлую картинку-фон, чтобы в папке профиля не копились файлы. */
+async function removeWallpaperFile(name = config.profile) {
+  const { wallpaper } = readProfileStore(name);
+  if (wallpaper?.type !== 'custom' || !wallpaper.file) return;
+  await fs.rm(path.join(profileStateDir(name), wallpaper.file), { force: true });
 }
 
 /** К каждой записи добавляем ссылку на сообщение в Telegram. */
@@ -379,6 +413,18 @@ async function detectOwner() {
       });
     } catch {
       /* аккаунт не отвечает — попробуем через бота */
+    }
+  }
+
+  // Участники группы — их видит аккаунт; Bot API такого списка не отдаёт
+  if (mtprotoConfigured() && config.chatId) {
+    try {
+      for (const member of await listGroupMembers()) {
+        if (found.some((f) => f.id === member.id)) continue;
+        found.push({ ...member, source: 'group' });
+      }
+    } catch {
+      /* нет доступа к списку участников — не беда */
     }
   }
 
@@ -539,7 +585,9 @@ const routes = {
       accent: store.accent,
       theme: store.theme,
       hasAvatar: Boolean(avatarPath()),
+      // telegram — то, что уже запомнили; accountConnected — есть ли сам вход
       telegram: store.telegram,
+      accountConnected: mtprotoConfigured(),
       lock: { type: store.lock.type, autoLockMinutes: store.lock.autoLockMinutes, pinLength: store.lock.pinLength ?? 4 },
       wallpaper: store.wallpaper ?? { type: 'none' },
       lastLoginAt: store.lastLoginAt,
@@ -568,7 +616,7 @@ const routes = {
     return routes['GET /api/profile']();
   },
 
-  /** Своя картинка вместо аватара; по желанию — сразу и в самом Telegram. */
+  /** Своя картинка вместо аватара из Telegram — только внутри программы. */
   'POST /api/profile/avatar': async (body) => {
     const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/i.exec(String(body?.dataUrl ?? ''));
     if (!match) throw new Error('Нужна картинка PNG, JPEG или WebP');
@@ -578,43 +626,47 @@ const routes = {
     const ext = match[1].toLowerCase().startsWith('jp') ? '.jpg' : `.${match[1].toLowerCase()}`;
     saveAvatar(buffer, ext);
 
-    if (body?.alsoTelegram) {
-      if (!mtprotoConfigured()) throw new Error('Картинка сохранена, но в Telegram её не поставить: аккаунт не подключён');
-      const file = avatarPath();
-      await uploadTelegramPhoto(file, path.basename(file), buffer.length);
-    }
-    return { ok: true, alsoTelegram: Boolean(body?.alsoTelegram) };
+    return { ok: true };
   },
 
-  /** Меняет имя в самом Telegram — его увидят все ваши собеседники. */
-  'POST /api/profile/telegram-name': async (body) => {
-    if (!mtprotoConfigured()) throw new Error('Аккаунт не подключён');
-    const info = await updateTelegramProfile({
-      firstName: String(body?.firstName ?? '').slice(0, 64),
-      lastName: String(body?.lastName ?? '').slice(0, 64),
-    });
-    writeProfileStore({ telegram: { ...info, updatedAt: Date.now() } });
-    return info;
-  },
-
-  /** Фон рабочей области: готовый набор, своя картинка или без фона. */
+  /**
+   * Фон рабочей области: один из готовых или своя картинка.
+   * Готовые — просто имя градиента, ничего не занимают; своя картинка
+   * лежит рядом с профилем одним файлом и заменяет прошлую.
+   */
   'POST /api/profile/wallpaper': async (body) => {
-    const type = body?.type ?? 'none';
+    const type = body?.type;
 
-    if (type === 'none') writeProfileStore({ wallpaper: { type: 'none' } });
-    else if (type === 'preset') writeProfileStore({ wallpaper: { type: 'preset', value: String(body.value ?? '').slice(0, 32) } });
-    else if (type === 'custom') {
+    if (type === 'none') {
+      await removeWallpaperFile();
+      writeProfileStore({ wallpaper: { type: 'none' } });
+      return routes['GET /api/profile']();
+    }
+
+    if (type === 'preset') {
+      const value = String(body?.value ?? '').slice(0, 32);
+      if (!/^[a-z]+$/.test(value)) throw new Error('Неизвестный фон');
+      await removeWallpaperFile();
+      writeProfileStore({ wallpaper: { type: 'preset', value } });
+      return routes['GET /api/profile']();
+    }
+
+    if (type === 'custom') {
       const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/i.exec(String(body?.dataUrl ?? ''));
       if (!match) throw new Error('Нужна картинка PNG, JPEG или WebP');
       const buffer = Buffer.from(match[2], 'base64');
       if (buffer.length > 12 * 1024 * 1024) throw new Error('Картинка больше 12 МБ');
-      const file = 'wallpaper.jpg';
-      await fs.mkdir(profileStateDir(), { recursive: true });
-      await fs.writeFile(path.join(profileStateDir(), file), buffer);
-      writeProfileStore({ wallpaper: { type: 'custom', file } });
-    } else throw new Error('Неизвестный фон');
 
-    return { wallpaper: readProfileStore().wallpaper };
+      await removeWallpaperFile();
+      const file = `wallpaper.${match[1].toLowerCase().startsWith('jp') ? 'jpg' : match[1].toLowerCase()}`;
+      const dir = profileStateDir();
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, file), buffer);
+      writeProfileStore({ wallpaper: { type: 'custom', file } });
+      return routes['GET /api/profile']();
+    }
+
+    throw new Error('Неизвестный вид фона');
   },
 
   /** Отключить аккаунт Telegram: ключ сессии стирается, архив и настройки остаются. */
@@ -726,8 +778,9 @@ const routes = {
 /* ── сервер ──────────────────────────────────────────────────────────────── */
 
 /**
- * Миниатюры не храним у себя: Telegram уже держит маленькую превьюшку каждого
- * снимка. Тянем её по требованию и кладём в кэш во временной папке.
+ * Миниатюры не храним у себя вообще: Telegram уже держит маленькую превьюшку
+ * каждого снимка. Тянем её по требованию и держим только в памяти — на диске
+ * программы не появляется ни одного лишнего файла.
  */
 async function serveThumb(req, res, url) {
   const fileId = url.searchParams.get('file');
@@ -736,16 +789,11 @@ async function serveThumb(req, res, url) {
     return;
   }
 
-  const cacheDir = path.join(config.tmpDir, 'thumbs');
-  const cacheFile = path.join(cacheDir, `${crypto.createHash('sha1').update(fileId).digest('hex')}.jpg`);
-
-  try {
-    const cached = await fs.readFile(cacheFile);
+  const cached = memoryThumbs.get(fileId);
+  if (cached) {
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
     res.end(cached);
     return;
-  } catch {
-    /* в кэше нет — качаем */
   }
 
   try {
@@ -754,10 +802,35 @@ async function serveThumb(req, res, url) {
     if (!response.ok) throw new Error(`Telegram ответил ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    await fs.mkdir(cacheDir, { recursive: true });
-    await fs.writeFile(cacheFile, buffer);
-
+    rememberThumb(fileId, buffer);
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
+    res.end(buffer);
+  } catch {
+    res.writeHead(404).end();
+  }
+}
+
+/** Аватар участника — тоже мимо диска, прямо из Telegram в браузер. */
+async function serveUserPhoto(req, res, url) {
+  const id = url.searchParams.get('id');
+  if (!id || !mtprotoConfigured()) {
+    res.writeHead(404).end();
+    return;
+  }
+
+  const key = `user:${id}`;
+  const cached = memoryThumbs.get(key);
+  if (cached) {
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' });
+    res.end(cached);
+    return;
+  }
+
+  try {
+    const buffer = await downloadUserPhoto(id);
+    if (!buffer) throw new Error('нет фото');
+    rememberThumb(key, buffer);
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' });
     res.end(buffer);
   } catch {
     res.writeHead(404).end();
@@ -773,8 +846,11 @@ async function serveWallpaper(req, res, url) {
     return;
   }
   try {
-    const data = await fs.readFile(path.join(profileStateDir(name), store.wallpaper.file));
-    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' });
+    const file = store.wallpaper.file;
+    const data = await fs.readFile(path.join(profileStateDir(name), file));
+    const ext = path.extname(file).toLowerCase();
+    const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache' });
     res.end(data);
   } catch {
     res.writeHead(404).end();
@@ -791,7 +867,7 @@ async function serveAvatar(req, res, url) {
   }
   const data = await fs.readFile(file);
   res.writeHead(200, {
-    'content-type': path.extname(file) === '.png' ? 'image/png' : 'image/jpeg',
+    'content-type': { '.png': 'image/png', '.webp': 'image/webp' }[path.extname(file).toLowerCase()] ?? 'image/jpeg',
     'cache-control': 'no-cache',
   });
   res.end(data);
@@ -863,6 +939,10 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
       await serveThumb(req, res, url);
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/api/user-photo') {
+      await serveUserPhoto(req, res, url);
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/wallpaper') {
       await serveWallpaper(req, res, url);
       return;
@@ -917,9 +997,19 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
   await new Promise(() => {}); // держим процесс до Ctrl+C
 }
 
+/**
+ * Открывает мастер в браузере. Если открыть нечем (сервер без графики,
+ * нет xdg-open), это не беда: ссылка уже напечатана выше — молча идём дальше.
+ */
 function openBrowser(url) {
   const cmd = os.platform() === 'darwin' ? 'open' : os.platform() === 'win32' ? 'start' : 'xdg-open';
   import('node:child_process')
-    .then(({ spawn }) => spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: os.platform() === 'win32' }).unref())
+    .then(({ spawn }) => {
+      const child = spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: os.platform() === 'win32' });
+      // Без этого обработчика ENOENT прилетает как необработанное событие 'error'
+      // и роняет весь мастер настройки.
+      child.on('error', () => {});
+      child.unref();
+    })
     .catch(() => {});
 }
