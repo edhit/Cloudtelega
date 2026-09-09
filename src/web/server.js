@@ -6,11 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
+import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, searchFiles, sqliteDriver, stats } from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
-import { log, humanSize } from '../logger.js';
+import { log, humanSize, onLog } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
@@ -69,7 +70,7 @@ async function startBot({ greet = true } = {}) {
   }
 
   // Без await: цикл опроса живёт, пока бота не остановят
-  runBot({ greet }).catch((err) => log.warn(`Бот остановился: ${err.message}`));
+  runBot({ greet }).catch((err) => log.warn(`Бот остановился: ${describeError(err, { kind: 'bot' })}`));
   // Дадим циклу дойти до приветствия, чтобы состояние вернулось уже настоящим
   await new Promise((r) => setTimeout(r, 150));
   return botState();
@@ -78,7 +79,7 @@ async function startBot({ greet = true } = {}) {
 /** Тихо поднимает бота при старте мастера и после смены профиля. */
 function autoStartBot({ greet = true } = {}) {
   if (!config.botToken || !config.adminIds.length) return;
-  startBot({ greet }).catch((err) => log.warn(`Бот не запустился: ${err.message}`));
+  startBot({ greet }).catch((err) => log.warn(`Бот не запустился: ${describeError(err, { kind: 'bot' })}`));
 }
 
 /**
@@ -95,30 +96,95 @@ function refreshBot() {
 
 /* ── фоновая работа (сканирование / отправка) ────────────────────────────── */
 
-const job = { mode: null, summary: null, error: null, finished: null, lines: [] };
+// problem, а не error: любое поле error в ответе клиент считает отказом запроса,
+// и тогда упавшая операция переставала отображаться вовсе.
+const job = { mode: null, summary: null, problem: null, finished: null, lines: [] };
 
-function note(text) {
-  job.lines.push(text);
-  if (job.lines.length > 60) job.lines.shift();
+// Лог держим длинным: по коротким «✗ не отправилось» причину не найти,
+// а лезть в терминал за ней человек не должен.
+const LOG_LIMIT = 500;
+
+/**
+ * Строка лога: уровень нужен, чтобы предупреждения и ошибки было видно глазом.
+ * @param {string} text
+ * @param {'info'|'ok'|'warn'|'error'} [level]
+ */
+function note(text, level = 'info') {
+  job.lines.push({ level, text, at: Date.now() });
+  if (job.lines.length > LOG_LIMIT) job.lines.shift();
+}
+
+/**
+ * Пока идёт работа, всё, что программа пишет в терминал, попадает и в браузер.
+ * Именно там оседают причины сбоев: повторы запросов, flood limit, отказ
+ * Telegram принять файл, неудачная конвертация HEIC.
+ * @returns {() => void} отписка
+ */
+function mirrorLogToJob() {
+  return onLog(({ level, text }) => {
+    if (level === 'plain') return;
+    note(text, level === 'ok' ? 'ok' : level);
+  });
+}
+
+/** Начало любой операции: чистим прошлый лог и пишем, с чем работаем. */
+function beginJob(mode, firstLine) {
+  job.mode = mode;
+  job.summary = null;
+  job.problem = null;
+  job.finished = null;
+  job.lines = [];
+  note(firstLine);
+  note(`Папок для обхода: ${config.scanPaths.length}${config.scanPaths.length ? ` — ${config.scanPaths.join(', ')}` : ''}`);
+  return mirrorLogToJob();
+}
+
+/** Конец операции: ошибку показываем целиком, с причиной и советом. */
+function failJob(err) {
+  job.problem = describeError(err);
+  note(job.problem, 'error');
+  if (err?.stack && process.env.CLOUDTELEGA_DEBUG) note(err.stack, 'error');
 }
 
 async function startScan() {
   if (job.mode) throw new Error('Уже идёт другая операция');
-  job.mode = 'scan';
-  job.summary = null;
-  job.error = null;
-  job.finished = null;
-  job.lines = ['Считаю файлы, хеши и даты съёмки…'];
+  const unmirror = beginJob('scan', 'Считаю файлы, хеши и даты съёмки…');
 
-  collect({ roots: config.scanPaths })
-    .then(({ summary, dropped }) => {
+  let lastPercent = -1;
+  collect({
+    roots: config.scanPaths,
+    onDateProgress: (done, total) => {
+      // Раз в 10 % — чтобы лог не превратился в счётчик
+      const percent = total ? Math.floor((done / total) * 10) * 10 : 0;
+      if (percent === lastPercent) return;
+      lastPercent = percent;
+      note(`Даты съёмки: ${done} из ${total} (${percent} %)`);
+    },
+  })
+    .then(({ summary, dropped, files }) => {
       job.summary = { ...summary, dropped: dropped.length };
-      note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}`);
+      note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}`, 'ok');
+      // Откуда разница между «медиафайлов на диске» и «файлов к отправке» —
+      // без этой строки цифры выглядят необъяснимо
+      if (summary.livePhotos) {
+        note(`Из них пар Live Photo: ${summary.livePhotos} — кадр и видео уходят одним сообщением`);
+      }
+      if (summary.big) note(`Крупнее 50 МБ: ${summary.big} — уйдут через аккаунт`);
+
+      for (const [year, n] of summary.byYear ?? []) note(`  ${year}: ${n}`);
+      // Отброшенные дубли — самая частая причина «а почему файлов меньше?»
+      if (dropped.length) {
+        note(`Не пойдут как отдельные файлы: ${dropped.length}`);
+        for (const d of dropped.slice(0, 20)) note(`  ${d.file.name} — ${d.reason}`);
+        if (dropped.length > 20) note(`  …и ещё ${dropped.length - 20}`);
+      }
+      if (!files.length) {
+        note('Отправлять нечего: в указанных папках не нашлось фото и видео', 'warn');
+      }
     })
-    .catch((err) => {
-      job.error = err.message;
-    })
+    .catch(failJob)
     .finally(() => {
+      unmirror();
       job.mode = null;
       job.finished = 'scan';
     });
@@ -126,34 +192,43 @@ async function startScan() {
 
 async function startSend() {
   if (job.mode || isRunning()) throw new Error('Уже идёт другая операция');
-  job.mode = 'send';
-  job.summary = null;
-  job.error = null;
-  job.finished = null;
-  job.lines = ['Сканирую каталоги…'];
+  const unmirror = beginJob('send', 'Сканирую каталоги…');
+  note(`Транспорт: бот ${config.botToken ? 'подключён' : 'не подключён'}, аккаунт ${mtprotoConfigured() ? 'подключён' : 'не подключён'}`);
 
   runSend({
     roots: config.scanPaths,
     hooks: {
       onScanned: ({ summary, dropped }) => {
         job.summary = { ...summary, dropped: dropped.length };
-        note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}. Начинаю отправку…`);
+        note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}. Начинаю отправку…`, 'ok');
+        if (dropped.length) note(`Схлопнуто дублей и пар: ${dropped.length}`);
       },
-      onFile: ({ index, total, file, status, error }) => {
+      onFile: ({ index, total, file, status, error, twin, result, topicId }) => {
         const name = file.relPath || file.name;
-        if (status === 'sent') note(`✓ ${index}/${total} ${name}`);
-        else if (status === 'duplicate') note(`⏭ ${index}/${total} ${name} — уже в архиве`);
-        else if (status === 'failed') note(`✗ ${index}/${total} ${name}: ${error}`);
+        const size = humanSize(file.size);
+        if (status === 'sent') {
+          const how = result?.method === 'mtproto' ? 'через аккаунт' : 'ботом';
+          note(`✓ ${index}/${total} ${name} (${size}, ${how}${topicId ? `, тема ${topicId}` : ''}, сообщение ${result?.messageId ?? '—'})`, 'ok');
+        } else if (status === 'duplicate') {
+          note(`⏭ ${index}/${total} ${name} — уже в архиве${twin?.name && twin.name !== file.name ? ` (как ${twin.name})` : ''}`);
+        } else if (status === 'skipped') {
+          note(`⏭ ${index}/${total} ${name} — пропущен: ${error}`, 'warn');
+        } else if (status === 'failed') {
+          note(`✗ ${index}/${total} ${name} (${size}): ${error}`, 'error');
+        }
       },
       onFinish: (r) => {
-        note(`Готово: отправлено ${r.sent} (${humanSize(r.bytesSent)}), дублей ${r.duplicates}, ошибок ${r.failed}`);
+        note(
+          `Готово: отправлено ${r.sent} (${humanSize(r.bytesSent)}), дублей ${r.duplicates}, ошибок ${r.failed}` +
+          `${r.stopped ? ' — остановлено вручную' : ''}`,
+          r.failed ? 'warn' : 'ok',
+        );
       },
     },
   })
-    .catch((err) => {
-      job.error = err.message;
-    })
+    .catch(failJob)
     .finally(() => {
+      unmirror();
       job.mode = null;
       job.finished = 'send';
     });
@@ -345,11 +420,11 @@ async function runChecks() {
               : 'Бот не администратор чата или ему запрещено публиковать сообщения',
           };
         } catch (err) {
-          result.chat = { ok: false, problem: err.message };
+          result.chat = { ok: false, problem: describeError(err, { kind: 'bot' }) };
         }
       }
     } catch (err) {
-      result.bot = { ok: false, problem: err.message };
+      result.bot = { ok: false, problem: describeError(err, { kind: 'bot' }) };
     }
   }
 
@@ -362,7 +437,7 @@ async function runChecks() {
         username: me.username ?? null,
       };
     } catch (err) {
-      result.account = { ok: false, problem: err.message };
+      result.account = { ok: false, problem: describeError(err, { kind: 'mtproto' }) };
     }
   }
 
@@ -1082,9 +1157,11 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result ?? {}));
     } catch (err) {
-      log.error(`${key}: ${err.message}`);
+      // Наружу отдаём причину целиком: «fetch failed» пользователю ничего не говорит
+      const message = describeError(err);
+      log.error(`${key}: ${message}`);
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: message }));
     }
   });
 

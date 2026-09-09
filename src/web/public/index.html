@@ -400,6 +400,17 @@
       <div id="scanResult" class="grid2" hidden></div>
 
       <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
+
+      <div class="note red" id="jobError" hidden>
+        <b>Не получилось</b>
+        <span class="prewrap" id="jobErrorText"></span>
+      </div>
+
+      <div class="log-tools" id="logTools" hidden>
+        <span class="group-title" style="padding:0">Что происходит</span>
+        <label class="log-filter"><input type="checkbox" id="logOnlyProblems"><span>Только проблемы</span></label>
+        <button class="btn btn-small" id="logCopy">Скопировать лог</button>
+      </div>
       <div class="log" id="log" hidden></div>
 
       <h2>Что дальше</h2>

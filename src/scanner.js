@@ -3,6 +3,8 @@ import path from 'node:path';
 import { isMedia, kindOf, extOf, PHOTO_EXT, VIDEO_EXT } from './media.js';
 import { detectCaptureDate } from './dates.js';
 import { normalizeStem } from './naming.js';
+import { log } from './logger.js';
+import { explainError } from './errors.js';
 
 // Служебные каталоги, которые встречаются на USB-дисках и на iPhone.
 const SKIP_DIRS = new Set([
@@ -46,8 +48,10 @@ export async function scanDir(root, opts = {}) {
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      // Нет прав / устройство отключилось — идём дальше, не роняем обход.
+    } catch (err) {
+      // Нет прав / устройство отключилось — идём дальше, не роняем обход,
+      // но молчать нельзя: иначе «нашлось 0 файлов» выглядит необъяснимо.
+      log.warn(`Не смог прочитать ${dir}: ${explainError(err)}`);
       continue;
     }
 
@@ -65,7 +69,8 @@ export async function scanDir(root, opts = {}) {
       let st;
       try {
         st = await fs.stat(full);
-      } catch {
+      } catch (err) {
+        log.warn(`Не смог прочитать ${full}: ${explainError(err)}`);
         continue;
       }
       if (st.size < minSize) continue;
@@ -190,11 +195,17 @@ export async function scanAll(roots, opts = {}) {
   for (const root of roots) {
     try {
       const st = await fs.stat(root);
-      if (!st.isDirectory()) continue;
-    } catch {
-      throw new Error(`Каталог недоступен: ${root}`);
+      if (!st.isDirectory()) {
+        log.warn(`${root} — это не папка, пропускаю`);
+        continue;
+      }
+    } catch (err) {
+      throw new Error(`Каталог недоступен: ${root} — ${explainError(err)}`);
     }
-    all.push(...(await scanDir(root, opts)));
+
+    const found = await scanDir(root, opts);
+    log.info(`${root}: медиафайлов ${found.length}`);
+    all.push(...found);
   }
 
   await enrichWithDates(all, onDateProgress);

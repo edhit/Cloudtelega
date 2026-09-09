@@ -2,6 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { config } from './config.js';
 import { log, humanSize } from './logger.js';
+import { describeError } from './errors.js';
 import { formatDate } from './dates.js';
 import {
   fileIdCoverage, getMeta, lastSent, listFailed, listTopics, randomSent,
@@ -177,7 +178,7 @@ async function cmdSendFiles(chatId, arg) {
       },
     },
   }).catch((err) => {
-    log.error(`Отправка упала: ${err.message}`);
+    log.error(`Отправка упала: ${describeError(err)}`);
     sendMessage(chatId, `Отправка прервалась: ${err.message}`).catch(() => {});
   });
 
@@ -458,14 +459,14 @@ export async function runBot({ greet = true } = {}) {
   botStatus.startedAt = Date.now();
   botStatus.error = null;
 
-  await setMyCommands(COMMANDS).catch((err) => log.warn(`setMyCommands: ${err.message}`));
+  await setMyCommands(COMMANDS).catch((err) => log.warn(`Не удалось объявить команды боту: ${describeError(err, { kind: 'bot' })}`));
 
   // «Я на связи» — чтобы не гадать, работает бот или нет
   if (greet) {
     for (const id of config.adminIds) {
       // Со звуком: это единственное сообщение, которое бот шлёт сам, и его ждут
       await sendMessage(id, greeting(), { disable_notification: false })
-        .catch((err) => log.warn(`Не смог поздороваться с ${id}: ${err.message}`));
+        .catch((err) => log.warn(`Не смог поздороваться с ${id}: ${describeError(err, { kind: 'bot' })}`));
     }
     botStatus.greeted = Date.now();
   }
@@ -483,7 +484,7 @@ export async function runBot({ greet = true } = {}) {
       } catch (err) {
         if (stopped || generation !== mine || err.name === 'AbortError') break;
         botStatus.error = err.message;
-        log.warn(`getUpdates: ${err.message}`);
+        log.warn(`Бот не смог получить команды: ${describeError(err, { kind: 'bot' })}`);
         await new Promise((r) => setTimeout(r, 3000));
         continue;
       }
@@ -501,7 +502,7 @@ export async function runBot({ greet = true } = {}) {
         try {
           await handleCommand(msg);
         } catch (err) {
-          log.error(`Команда «${msg.text}»: ${err.message}`);
+          log.error(`Команда «${msg.text}»: ${describeError(err)}`);
           await sendMessage(msg.chat.id, `Ошибка: ${err.message}`).catch(() => {});
         }
       }

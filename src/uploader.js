@@ -1,6 +1,7 @@
 import { config, heicMode, livePhotoMode, BOT_UPLOAD_LIMIT, PHOTO_LIMIT } from './config.js';
 import { buildCaption } from './caption.js';
 import { log, humanSize } from './logger.js';
+import { describeError } from './errors.js';
 import { convertHeicToJpeg, isHeic, mimeOf, safeUnlink } from './media.js';
 import { splitMotionPhoto } from './motion.js';
 import { botConfigured, sendFileViaBot, sendLivePhotoViaBot } from './telegram/botApi.js';
@@ -51,7 +52,7 @@ async function buildPlainJobs(file, topicId) {
       jpeg = await convertHeicToJpeg(file.absPath);
     } catch (err) {
       // Битый или нестандартный HEIC — не теряем файл, отправляем оригинал как есть.
-      log.warn(`${file.name}: не удалось сконвертировать в JPEG (${err.message}), отправляю оригинал`);
+      log.warn(`${file.name}: не удалось сконвертировать в JPEG (${describeError(err)}), отправляю оригинал`);
       if (!jobs.length) jobs.push(originalJob(file, caption, topicId));
       return jobs;
     }
@@ -82,7 +83,7 @@ async function makeStill(file) {
     const jpeg = await convertHeicToJpeg(file.absPath);
     return { filePath: jpeg.path, fileName: jpeg.name, size: jpeg.size, mime: 'image/jpeg', tempFiles: [jpeg.path] };
   } catch (err) {
-    log.warn(`${file.name}: не удалось сконвертировать кадр Live Photo (${err.message})`);
+    log.warn(`${file.name}: не удалось сконвертировать кадр Live Photo (${describeError(err)})`);
     return null;
   }
 }
@@ -98,7 +99,7 @@ async function buildMotionJob(file, topicId) {
   try {
     parts = await splitMotionPhoto(file.absPath);
   } catch (err) {
-    log.warn(`${file.name}: не удалось разобрать Motion Photo (${err.message})`);
+    log.warn(`${file.name}: не удалось разобрать Motion Photo (${describeError(err)})`);
     return null;
   }
   if (!parts) return null;
@@ -236,7 +237,7 @@ async function deliverLivePhoto(job) {
   try {
     return await sendLivePhotoViaBot(job);
   } catch (err) {
-    log.warn(`${job.fileName}: Live Photo не отправился (${err.message}), шлю кадр и видео отдельно`);
+    log.warn(`${job.fileName}: Live Photo не отправился (${describeError(err, { kind: 'bot' })}), шлю кадр и видео отдельно`);
     const still = await deliver({ ...job, asDocument: false });
     await deliver({
       filePath: job.videoPath,
@@ -262,7 +263,7 @@ export async function sendJob(job) {
       return await deliver(job);
     } catch (err) {
       if (!job.asDocument && PHOTO_REJECTED.test(`${err.message} ${err.description ?? ''}`)) {
-        log.warn(`${job.fileName}: не принялся как фото (${err.message}), отправляю документом`);
+        log.warn(`${job.fileName}: не принялся как фото (${describeError(err, { kind: 'bot' })}), отправляю документом`);
         return await deliver({ ...job, asDocument: true });
       }
       throw err;

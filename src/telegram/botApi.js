@@ -1,6 +1,7 @@
 import { openAsBlob } from 'node:fs';
 import { config, BOT_UPLOAD_LIMIT } from '../config.js';
 import { log } from '../logger.js';
+import { botApiAdvice, describeError, explainError } from '../errors.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -8,11 +9,18 @@ function api(method) {
   return `${config.botApiRoot}/bot${config.botToken}/${method}`;
 }
 
+/** Куда именно стучимся — без токена, его в лог писать нельзя. */
+function endpointOf(method) {
+  return `${config.botApiRoot}/bot***/${method}`;
+}
+
 async function call(method, payload, { retries = 3, signal } = {}) {
   let attempt = 0;
   for (;;) {
     attempt += 1;
     let res;
+    const startedAt = Date.now();
+
     try {
       const isForm = payload instanceof FormData;
       res = await fetch(api(method), {
@@ -24,40 +32,73 @@ async function call(method, payload, { retries = 3, signal } = {}) {
     } catch (err) {
       // Запрос оборвали намеренно (остановили бота) — повторять нечего
       if (err.name === 'AbortError' || signal?.aborted) throw err;
-      if (attempt > retries) throw err;
+
+      // «fetch failed» само по себе ни о чём не говорит: настоящая причина
+      // лежит в err.cause, её и показываем.
+      const why = explainError(err);
+      const spent = Date.now() - startedAt;
+
+      if (attempt > retries) {
+        const fatal = new Error(`${method}: не удалось связаться с Telegram — ${describeError(err)}`);
+        fatal.code = 'NETWORK';
+        fatal.method = method;
+        fatal.endpoint = endpointOf(method);
+        fatal.cause = err;
+        throw fatal;
+      }
+
       const wait = 2 ** attempt * 1000;
-      log.warn(`Bot API сеть: ${err.message}. Повтор через ${wait} мс`);
+      log.warn(
+        `Bot API ${method}: ${why}. Попытка ${attempt} из ${retries + 1} заняла ${spent} мс, ` +
+        `повтор через ${wait} мс. Адрес: ${endpointOf(method)}`,
+      );
       await sleep(wait);
       continue;
     }
 
     let body;
+    let raw = '';
     try {
-      body = await res.json();
+      raw = await res.text();
+      body = JSON.parse(raw);
     } catch {
-      body = { ok: false, description: `HTTP ${res.status}` };
+      // Не JSON — обычно так отвечает прокси или страница-заглушка провайдера
+      body = { ok: false, description: raw.slice(0, 200).replace(/\s+/g, ' ').trim() || `пустой ответ, HTTP ${res.status}` };
     }
 
     if (body.ok) return body.result;
 
+    const description = body.description ?? `HTTP ${res.status}`;
+
     // Flood limit — Telegram сам говорит, сколько ждать.
     const retryAfter = body.parameters?.retry_after;
     if (retryAfter && attempt <= retries + 2) {
-      log.warn(`Bot API flood limit, ждём ${retryAfter} с`);
+      log.warn(
+        `Bot API ${method}: Telegram придержал бота (flood limit), просит подождать ${retryAfter} с. ` +
+        'Так бывает при слишком частых запросах — программа ждёт и продолжает сама.',
+      );
       await sleep((retryAfter + 1) * 1000);
       continue;
     }
 
     if (res.status >= 500 && attempt <= retries) {
       const wait = 2 ** attempt * 1000;
-      log.warn(`Bot API ${res.status}: ${body.description}. Повтор через ${wait} мс`);
+      log.warn(`Bot API ${method}: сбой на стороне Telegram — HTTP ${res.status}, «${description}». Повтор через ${wait} мс`);
       await sleep(wait);
       continue;
     }
 
-    const err = new Error(`Bot API ${method}: ${body.description ?? 'неизвестная ошибка'}`);
+    const advice = botApiAdvice(description, res.status);
+    const err = new Error(
+      `Bot API ${method}: ${description} (HTTP ${res.status}` +
+      `${body.error_code && body.error_code !== res.status ? `, код ${body.error_code}` : ''})` +
+      `${advice ? `. ${advice}` : ''}`,
+    );
     err.code = res.status;
-    err.description = body.description;
+    err.method = method;
+    err.description = description;
+    err.retryAfter = retryAfter ?? null;
+    err.advice = advice;
     throw err;
   }
 }

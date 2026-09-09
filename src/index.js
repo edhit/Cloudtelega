@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { config, ensureDirs, assertChat, heicMode, livePhotoMode, pairPrefer, BOT_UPLOAD_LIMIT } from './config.js';
 import { log, humanSize } from './logger.js';
+import { describeError } from './errors.js';
 import { closeDb, fileIdCoverage, listFailed, listTopics, resetFailed, searchFiles, sqliteDriver, stats } from './db.js';
 import { messageLink } from './links.js';
 import { summarize } from './scanner.js';
@@ -300,7 +301,7 @@ async function cmdCheck() {
         }
       }
     } catch (err) {
-      log.error(`Бот: ${err.message}`);
+      log.error(`Бот: ${describeError(err, { kind: 'bot' })}`);
     }
   } else {
     log.warn('TELEGRAM_BOT_TOKEN не задан — файлы до 50 МБ отправлять нечем.');
@@ -311,7 +312,7 @@ async function cmdCheck() {
       const me = await whoAmI();
       log.ok(`Аккаунт: ${me.firstName ?? ''} ${me.username ? `@${me.username}` : ''}`.trim());
     } catch (err) {
-      log.error(`Аккаунт: ${err.message}`);
+      log.error(`Аккаунт: ${describeError(err, { kind: 'mtproto' })}`);
     }
   } else {
     log.warn('Аккаунт не подключён — файлы больше 50 МБ отправить не получится (npm run login).');
@@ -390,7 +391,7 @@ async function main() {
       default: usage(); break;
     }
   } catch (err) {
-    log.error(err.message ?? err);
+    log.error(describeError(err));
     process.exitCode = 1;
   } finally {
     await disconnect();

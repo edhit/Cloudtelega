@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { config, reloadConfig, mtprotoLimit } from '../config.js';
 import { updateEnv } from '../env.js';
 import { log, humanSize, progressBar } from '../logger.js';
+import { describeError } from '../errors.js';
 
 // teleproto (поддерживаемый форк GramJS) — CommonJS-пакет,
 // подключаем через require, чтобы не зависеть от интеропа ESM.
@@ -83,7 +84,7 @@ export async function login() {
     phoneNumber: async () => (await rl.question('Номер телефона (+7...): ')).trim(),
     password: async () => (await rl.question('Пароль двухфакторной авторизации: ')).trim(),
     phoneCode: async () => (await rl.question('Код из Telegram: ')).trim(),
-    onError: (err) => log.error('Ошибка входа:', err.message ?? err),
+    onError: (err) => log.error('Ошибка входа:', describeError(err, { kind: 'mtproto' })),
   });
 
   const me = await c.getMe();
@@ -229,7 +230,7 @@ export async function createStorageGroup({ title, about = 'Архив фото �
       await c.invoke(new Api.channels.ToggleForum({ channel, enabled: true, tabs: false }));
       isForum = true;
     } catch (err) {
-      warnings.push(`Темы включить не удалось (${err.message}). Включите их в настройках группы вручную.`);
+      warnings.push(`Темы включить не удалось (${describeError(err, { kind: 'mtproto' })}). Включите их в настройках группы вручную.`);
     }
   }
 
@@ -238,7 +239,7 @@ export async function createStorageGroup({ title, about = 'Архив фото �
     await c.invoke(new Api.channels.InviteToChannel({ channel, users: [bot] }));
   } catch (err) {
     // Бот мог добавиться сам, если уже состоял в группе
-    warnings.push(`Не удалось добавить бота (${err.message})`);
+    warnings.push(`Не удалось добавить бота (${describeError(err, { kind: 'mtproto' })})`);
   }
 
   try {
@@ -259,7 +260,7 @@ export async function createStorageGroup({ title, about = 'Архив фото �
       }),
     );
   } catch (err) {
-    warnings.push(`Не удалось выдать боту права администратора (${err.message}). Сделайте это вручную.`);
+    warnings.push(`Не удалось выдать боту права администратора (${describeError(err, { kind: 'mtproto' })}). Сделайте это вручную.`);
   }
 
   peerCache = null;

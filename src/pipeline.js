@@ -2,6 +2,7 @@ import { config, livePhotoMode, pairPrefer } from './config.js';
 import { findByHash, findSentByStemName, markFailed, markSent, upsertPending } from './db.js';
 import { sha256Cached } from './hash.js';
 import { log } from './logger.js';
+import { describeError } from './errors.js';
 import { scanAll, summarize } from './scanner.js';
 import { topicForFile } from './telegram/topics.js';
 import { normalizeStem } from './naming.js';
@@ -95,7 +96,7 @@ async function recordCompanion(companion, result, topicId, inline) {
       fileType: inline ? (result.videoFileId ? 'video' : null) : (result.fileType ?? null),
     });
   } catch (err) {
-    log.warn(`Не удалось записать в базу видео Live Photo ${companion.name}: ${err.message}`);
+    log.warn(`Не удалось записать в базу видео Live Photo ${companion.name}: ${describeError(err)}`);
   }
 }
 
@@ -152,7 +153,7 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
         sha256 = await sha256Cached(file.absPath, file.size, file.mtime, file.name);
       } catch (err) {
         state.failed += 1;
-        await emit('failed', { error: `не удалось прочитать: ${err.message}` });
+        await emit('failed', { error: `не удалось прочитать файл: ${describeError(err)}` });
         continue;
       }
 
@@ -212,9 +213,11 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
         state.bytesSent += file.size;
         await emit('sent', { result: firstResult, topicId });
       } catch (err) {
+        // Причина целиком: по «fetch failed» в логе понять ничего нельзя
+        const why = describeError(err, { kind: err.method ? 'bot' : 'mtproto' });
         state.failed += 1;
-        markFailed(sha256, err.message ?? err);
-        await emit('failed', { error: err.message ?? String(err) });
+        markFailed(sha256, why);
+        await emit('failed', { error: why });
         if (err.code === 'NO_TRANSPORT') break;
       }
 

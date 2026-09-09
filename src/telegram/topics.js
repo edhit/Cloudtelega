@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { log } from '../logger.js';
+import { describeError } from '../errors.js';
 import { getTopic, putTopic } from '../db.js';
 import { botConfigured, createForumTopicViaBot } from './botApi.js';
 import { createForumTopicViaAccount, listForumTopics, mtprotoConfigured } from './mtproto.js';
@@ -13,7 +14,7 @@ async function loadRemoteTopics() {
   try {
     remoteTopicsCache = await listForumTopics();
   } catch (err) {
-    log.warn(`Не удалось получить список топиков: ${err.message}`);
+    log.warn(`Не удалось получить список топиков: ${describeError(err, { kind: 'bot' })}`);
     remoteTopicsCache = null;
   }
   return remoteTopicsCache;

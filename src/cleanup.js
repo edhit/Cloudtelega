@@ -20,7 +20,7 @@ export async function cleanupStrayLiveVideos({ apply = false, limit = 500 } = {}
       markSkipped(row.sha256, `дубль Live Photo к ${row.photo_name}, сообщение удалено`);
       result.deleted += 1;
     } catch (err) {
-      result.failed.push({ name: row.name, error: err.message });
+      result.failed.push({ name: row.name, error: describeError(err, { kind: 'bot' }) });
     }
   }
   return result;

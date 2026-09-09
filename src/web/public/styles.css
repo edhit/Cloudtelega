@@ -329,6 +329,8 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
   border-radius: 10px; padding: 12px 14px; font-size: 13.5px; margin: 14px 0;
 }
 .note.blue { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.note.red { background: color-mix(in srgb, var(--red) 12%, transparent); }
+.note.red b { display: block; margin-bottom: 4px; }
 
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
@@ -342,12 +344,24 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
 .progress { height: 8px; border-radius: 999px; background: var(--chip); overflow: hidden; margin: 14px 0 6px; }
 .progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
 
+/* Лог: то же, что программа пишет в терминал — чтобы за причиной сбоя
+   не приходилось туда лезть. Предупреждения и ошибки выделены цветом. */
+.log-tools { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; }
+.log-tools .group-title { flex: 1; }
+.log-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.log-filter input { margin: 0; }
+
 .log {
   background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 12px 14px; max-height: 260px; overflow-y: auto;
+  padding: 12px 14px; max-height: 340px; overflow-y: auto;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px;
-  color: var(--text-2); white-space: pre-wrap; word-break: break-word;
+  color: var(--text-2); word-break: break-word;
 }
+.log-line { display: flex; gap: 8px; padding: 1px 0; white-space: pre-wrap; }
+.log-time { flex: none; color: var(--text-3); }
+.log-ok { color: var(--green); }
+.log-warn { color: var(--orange); }
+.log-error { color: var(--red); }
 
 .pathlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .pathitem {

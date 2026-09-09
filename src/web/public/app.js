@@ -1960,12 +1960,50 @@ async function runChecks() {
   }
 }
 
+/** Текст лога целиком — его копируют, чтобы прислать или разобраться позже. */
+let lastLogLines = [];
+
+function renderLog(lines) {
+  const box = $('#log');
+  lastLogLines = lines.map((l) => (typeof l === 'string' ? l : `${logTime(l.at)} ${l.text}`));
+
+  $('#logTools').hidden = !lines.length;
+  box.hidden = !lines.length;
+  if (!lines.length) return;
+
+  // Прокручиваем к концу, только если человек и так смотрел конец:
+  // иначе он не сможет разглядеть строку с ошибкой выше.
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+
+  box.innerHTML = '';
+  const onlyProblems = $('#logOnlyProblems')?.checked;
+  for (const line of lines) {
+    const entry = typeof line === 'string' ? { level: 'info', text: line } : line;
+    if (onlyProblems && entry.level !== 'warn' && entry.level !== 'error') continue;
+
+    const row = document.createElement('div');
+    row.className = `log-line log-${entry.level ?? 'info'}`;
+    if (entry.at) {
+      const time = document.createElement('span');
+      time.className = 'log-time';
+      time.textContent = logTime(entry.at);
+      row.append(time);
+    }
+    const text = document.createElement('span');
+    text.textContent = entry.text;
+    row.append(text);
+    box.append(row);
+  }
+
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+const logTime = (ms) => new Date(ms).toLocaleTimeString('ru-RU', { hour12: false });
+
 function renderJob(job) {
   const running = job.running;
   $('#doStop').hidden = !(running && job.mode === 'send');
-  $('#log').hidden = !job.lines.length;
-  $('#log').textContent = job.lines.join('\n');
-  $('#log').scrollTop = $('#log').scrollHeight;
+  renderLog(job.lines ?? []);
 
   const s = job.send ?? {};
   if (job.mode === 'send' && s.total) {
@@ -1985,23 +2023,40 @@ function renderJob(job) {
       <div class="stat"><b>${b.livePhotos ?? 0}</b><small>Live Photo</small></div>`;
   }
 
+  // Ошибка целиком остаётся на виду: тост исчезает, а разбираться надо по ней
+  $('#jobError').hidden = !job.problem;
+  if (job.problem) $('#jobErrorText').textContent = job.problem;
+
   if (!running && poller) {
     clearInterval(poller);
     poller = null;
-    if (job.error) toast(job.error, true);
+    const failed = job.send?.failed ?? 0;
+    if (job.problem) toast('Не получилось — подробности ниже', true);
+    else if (failed) toast(`Отправка закончена, но ${failed} не ушло — причина в логе`, true);
     else if (job.finished === 'send') toast('Отправка завершена');
+    else if (job.finished === 'scan') toast('Готово — смотрите, что нашлось');
   }
 }
+
+$('#logCopy').addEventListener('click', (e) => guard(e.target, async () => {
+  await navigator.clipboard.writeText(lastLogLines.join('\n'));
+  toast('Лог скопирован');
+}));
+
+$('#logOnlyProblems').addEventListener('change', () => renderLog(lastJob?.lines ?? []));
+
+let lastJob = null;
 
 function startPolling() {
   clearInterval(poller);
   poller = setInterval(async () => {
     try {
-      renderJob(await api('/api/job'));
+      lastJob = await api('/api/job');
+      renderJob(lastJob);
     } catch {
       /* подождём следующего тика */
     }
-  }, 1500);
+  }, 1200);
 }
 
 $('#doScan').addEventListener('click', (e) => guard(e.target, async () => {
@@ -2054,6 +2109,6 @@ refresh()
       showLock({ name: state.profile, method: me?.lock ?? 'pin', pinLength: me?.pinLength ?? 4, canCode: true, label: me?.displayName });
       return null;
     }
-    return api('/api/job').then(renderJob).catch(() => {});
+    return api('/api/job').then((j) => { lastJob = j; renderJob(j); }).catch(() => {});
   })
   .catch((err) => toast(err.message, true));
