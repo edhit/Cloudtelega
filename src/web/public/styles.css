@@ -157,6 +157,17 @@ html, body {
 .nav-num.done { background: var(--green); color: #fff; }
 .nav-label { flex: 1; font-size: 14px; }
 
+/* Второй блок меню — не шаги настройки, а то, что открывают время от времени */
+.nav-plain { margin-bottom: 2px; }
+.nav-icon {
+  width: 22px; flex: none; text-align: center;
+  font-size: 14px; line-height: 22px; filter: grayscale(0.25);
+}
+.nav-lock { color: var(--text-2); }
+.nav + .side-title { padding-top: 18px; }
+
+.row-side { display: flex; align-items: center; gap: 10px; flex: none; }
+
 .sidebar-foot { margin-top: 22px; padding: 0 10px; color: var(--text-3); font-size: 12px; line-height: 1.5; }
 
 /* ── содержимое ──────────────────────────────────────────────────────────── */
@@ -408,6 +419,15 @@ a { color: var(--accent); }
 }
 .lock-card b { display: block; font-size: 18px; }
 .lock-card input { margin-top: 14px; text-align: center; font-size: 17px; letter-spacing: 0.15em; }
+
+/* Другие профили прямо на экране замка: закрыли свой — можно уйти в соседний */
+.lock-others { margin-top: 20px; text-align: left; }
+.lock-sep {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; color: var(--text-3); font-size: 11.5px;
+}
+.lock-sep::before, .lock-sep::after { content: ''; flex: 1; height: 1px; background: var(--sep); }
+.lock-others .account-list { max-height: 30vh; overflow-y: auto; }
 
 /* ── модальные окна ──────────────────────────────────────────────────────── */
 

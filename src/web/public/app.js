@@ -144,6 +144,36 @@ function buildPinField(body, length, onComplete) {
   return { wrap, cells, value, clear: () => { cells.forEach((c) => { c.value = ''; }); cells[0].focus(); } };
 }
 
+/** Ввод пароля — тем же окном, что и PIN, только строкой, а не по цифрам. */
+function askPassword({ title, text, okText = 'Готово', minLength = 6 }) {
+  let input;
+  return openModal({
+    title,
+    text,
+    build: (body, { setValid }) => {
+      input = document.createElement('input');
+      input.type = 'password';
+      input.autocomplete = 'new-password';
+      input.placeholder = 'Пароль';
+
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = `Минимум ${minLength} символов`;
+
+      setValid(false);
+      input.addEventListener('input', () => setValid(input.value.length >= minLength));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && input.value.length >= minLength) $('#modalOk').click();
+      });
+
+      body.append(input, hint);
+      return input;
+    },
+    okText,
+    collect: () => (input.value.length >= minLength ? input.value : null),
+  });
+}
+
 function askPin({ title, text, length = 4, okText = 'Готово' }) {
   let field;
   return openModal({
@@ -239,7 +269,7 @@ const humanSize = (bytes) => {
 
 function show(pane) {
   $$('.pane').forEach((p) => p.classList.toggle('active', p.id === `pane-${pane}`));
-  $$('#nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.pane === pane)));
+  $$('#nav button, #navExtra button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.pane === pane)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
   if (pane === 'archive') loadArchive();
@@ -249,7 +279,8 @@ function show(pane) {
   if (pane === 'prefs') renderPreview();
 }
 
-$$('#nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.pane)));
+$$('#nav button[data-pane], #navExtra button[data-pane]').forEach((b) =>
+  b.addEventListener('click', () => show(b.dataset.pane)));
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => show(b.dataset.go)));
 
 function markDone(pane, done) {
@@ -506,9 +537,50 @@ async function refresh() {
   if (s.sessionSet) pill($('#accountStatus'), 'ok', 'аккаунт подключён');
   if (paths.length) pill($('#pathStatus'), 'ok', `папок: ${paths.length}`);
 
-  markDone('archive', (state.stats?.total?.n ?? 0) > 0);
+  renderBot();
   updateCreateAvailability();
 }
+
+/* ── бот: слушает команды с телефона ─────────────────────────────────────── */
+
+/**
+ * Бот включается сам вместе с мастером — отдельную команду в терминале
+ * запускать не нужно. Здесь только видно, работает он или нет.
+ */
+function renderBot() {
+  const bot = state?.bot ?? { running: false };
+  const s = state?.settings ?? {};
+  const ready = Boolean(s.botTokenSet && (s.admins ?? []).length);
+
+  const toggle = $('#botToggle');
+  toggle.textContent = bot.running ? 'Выключить' : 'Включить';
+  toggle.disabled = !ready;
+  toggle.dataset.action = bot.running ? 'stop' : 'start';
+
+  if (bot.running) {
+    pill($('#botPill'), 'ok', 'на связи');
+    $('#botText').textContent =
+      'Бот уже написал вам в Telegram — командуйте оттуда: /send, /status, /random. ' +
+      'Слушает, пока открыта эта программа.';
+    return;
+  }
+
+  pill($('#botPill'), ready ? '' : 'warn', ready ? 'выключен' : 'не готов');
+  $('#botText').textContent = ready
+    ? 'Включите — и командуйте архивом из Telegram, не подходя к компьютеру'
+    : bot.error
+      ? `Не запустился: ${bot.error}`
+      : !s.botTokenSet
+        ? 'Сначала подключите бота на шаге 2'
+        : 'Сначала укажите на шаге 6, кто может им командовать';
+}
+
+$('#botToggle').addEventListener('click', (e) => guard(e.target, async () => {
+  const stopping = e.target.dataset.action === 'stop';
+  await api(stopping ? '/api/bot/stop' : '/api/bot/start', {});
+  await refresh();
+  toast(stopping ? 'Бот выключен' : 'Бот на связи — посмотрите Telegram');
+}));
 
 /* ── шаг 1: бот ──────────────────────────────────────────────────────────── */
 
@@ -862,6 +934,7 @@ $('#detectOwner').addEventListener('click', (e) => guard(e.target, async () => {
     account: 'ваш аккаунт',
     group: 'участник группы',
     bot: 'писал вашему боту',
+    known: 'писал боту раньше',
   };
 
   const candidates = owners
@@ -1094,9 +1167,8 @@ function renderSwatches(active) {
 
 function updateLockRow() {
   const type = $('#segLock input:checked')?.value ?? 'none';
-  $('#lockSecretRow').hidden = type !== 'password';
   $('#pinLengthRow').hidden = type !== 'pin';
-  $('#lockSecretLabel').textContent = 'Пароль — минимум 6 символов';
+  $('#saveLock').textContent = type === 'none' ? 'Выключить защиту' : 'Придумать и включить';
   $('#lockHint').textContent = type === 'telegram'
     ? (profileData?.canUseTelegramCode
         ? 'Код будет приходить вашему боту в личку'
@@ -1165,12 +1237,18 @@ $('#saveLock').addEventListener('click', (e) => guard(e.target, async () => {
     if (first !== again) throw new Error('PIN не совпал — попробуйте ещё раз');
     secret = first;
   } else if (type === 'password') {
-    secret = $('#lockSecret').value;
-    if (!secret) throw new Error('Введите пароль');
+    const first = await askPassword({
+      title: 'Придумайте пароль',
+      text: 'Его нужно будет вводить при входе в профиль. Забудете — войдёте по коду из Telegram.',
+    });
+    if (!first) return;
+    const again = await askPassword({ title: 'Повторите пароль', okText: 'Включить защиту' });
+    if (!again) return;
+    if (first !== again) throw new Error('Пароль не совпал — попробуйте ещё раз');
+    secret = first;
   }
 
   await api('/api/profile/lock', { type, secret, autoLockMinutes: Number($('#autoLock').value) || 30 });
-  $('#lockSecret').value = '';
   await loadProfile();
   await refresh();
   toast(type === 'none' ? 'Защита выключена' : 'Защита включена');
@@ -1178,8 +1256,20 @@ $('#saveLock').addEventListener('click', (e) => guard(e.target, async () => {
 
 $('#lockNow').addEventListener('click', (e) => guard(e.target, async () => {
   const { locked } = await api('/api/profiles/lock-now', {});
-  if (!locked) throw new Error('У профиля нет защиты — сначала включите PIN, пароль или код');
-  await refresh();
+  if (!locked) {
+    show('profile');
+    throw new Error('У профиля нет защиты — сначала включите PIN, пароль или код');
+  }
+
+  // Показываем экран замка сразу: с него можно и войти обратно, и уйти в другой профиль
+  const me = state.profiles.find((p) => p.active);
+  showLock({
+    name: state.profile,
+    method: me?.lock ?? 'pin',
+    pinLength: me?.pinLength ?? 4,
+    canCode: true,
+    label: me?.displayName,
+  });
 }));
 
 $('#logoutTelegram').addEventListener('click', (e) => guard(e.target, async () => {
@@ -1219,8 +1309,11 @@ function showLock({ name, method, pinLength = 4, canCode, label }) {
   lockTarget = { name, method, pinLength, canCode };
   $('#lockscreen').hidden = false;
 
-  avatarStyle($('#lockAvatar'), { name, hasAvatar: true, letter: label ?? name });
-  $('#lockTitle').textContent = label ?? (name === 'default' ? 'Основной' : name);
+  const profile = state?.profiles?.find((p) => p.name === name);
+  const title = label || profile?.displayName || (name === 'default' ? 'Основной' : name);
+
+  avatarStyle($('#lockAvatar'), { name, hasAvatar: profile?.hasAvatar ?? false, letter: title });
+  $('#lockTitle').textContent = title;
   $('#lockSub').textContent = method === 'telegram'
     ? 'Нажмите «Прислать код» — он придёт вам в Telegram'
     : method === 'password' ? 'Введите пароль' : 'Введите PIN';
@@ -1244,7 +1337,72 @@ function showLock({ name, method, pinLength = 4, canCode, label }) {
 
   $('#lockCode').hidden = !(canCode || method === 'telegram');
   $('#lockNote').textContent = method === 'telegram' ? '' : 'Забыли? Можно войти по коду из Telegram';
+
+  renderLockProfiles(name);
   setTimeout(() => lockField.focus(), 60);
+}
+
+/**
+ * Рядом с полем ввода — остальные профили. Закрыли свой и хотите зайти в чужой
+ * или завести новый: не нужно сначала открывать закрытый.
+ */
+function renderLockProfiles(current) {
+  const box = $('#lockOthers');
+  const list = $('#lockProfiles');
+  list.innerHTML = '';
+
+  const others = (state?.profiles ?? []).filter((p) => p.name !== current);
+  box.hidden = false;
+  $('#lockSepText').textContent = others.length ? 'или войдите в другой профиль' : 'или заведите ещё один профиль';
+
+  for (const p of others) {
+    const label = p.displayName || (p.name === 'default' ? 'Основной' : p.name);
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.className = 'account';
+
+    const avatar = document.createElement('span');
+    avatar.className = 'account-avatar';
+    avatarStyle(avatar, { name: p.name, hasAvatar: p.hasAvatar, letter: label });
+
+    const text = document.createElement('span');
+    text.className = 'account-text';
+    const title = document.createElement('b');
+    title.textContent = label;
+    const sub = document.createElement('small');
+    sub.textContent = p.lock === 'none' ? 'открыт' : p.locked ? '🔒 спросит код' : '🔓 открыт';
+    text.append(title, sub);
+
+    btn.append(avatar, text);
+    btn.addEventListener('click', () => guard(btn, () => switchFromLock(p, label)));
+    li.append(btn);
+    list.append(li);
+  }
+}
+
+/** Переход в другой профиль прямо с экрана замка. */
+async function switchFromLock(profile, label) {
+  const res = await api('/api/profiles/switch', { name: profile.name });
+  if (res.needsUnlock) {
+    // У соседа тоже замок — просто перерисовываем экран под него
+    showLock({
+      name: res.name,
+      method: res.method,
+      pinLength: res.pinLength,
+      canCode: res.canCode,
+      label,
+    });
+    return;
+  }
+
+  state = res;
+  hideLock();
+  captionSamples = null;
+  archiveOffset = 0;
+  profileData = null;
+  await refresh();
+  toast(`Профиль: ${label}`);
+  show('start');
 }
 
 function hideLock() {
@@ -1280,6 +1438,22 @@ async function submitUnlock() {
   toast('Добро пожаловать');
   show('start');
 }
+
+$('#lockNewProfile').addEventListener('click', (e) => guard(e.target, async () => {
+  const name = await askText({
+    title: 'Новый профиль',
+    text: 'У него будут свои бот, группа, аккаунт и архив — от других профилей он полностью отделён.',
+    placeholder: 'Например, Маша',
+    okText: 'Создать',
+  });
+  if (!name) return;
+
+  const { profiles } = await api('/api/profiles/create', { name });
+  state = { ...state, profiles: profiles ?? state.profiles };
+  await switchFromLock({ name, lock: 'none', locked: false }, name);
+  toast(`Профиль «${name}» создан — настройте его с первого шага`);
+  show('bot');
+}));
 
 $('#lockUnlock').addEventListener('click', (e) => guard(e.target, submitUnlock));
 

@@ -342,50 +342,172 @@ async function handleCommand(msg) {
   }
 }
 
+/* ── приветствие ─────────────────────────────────────────────────────────── */
+
+const plural = (n, one, few, many) => {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+};
+
+/** Что бот пишет владельцу, как только начал слушать команды. */
+function greeting() {
+  const sent = stats().byStatus.find((r) => r.status === 'sent')?.n ?? 0;
+  const archive = sent
+    ? `В архиве уже ${sent} ${plural(sent, 'файл', 'файла', 'файлов')}.`
+    : 'Архив пока пуст — отправьте первую партию командой /send.';
+
+  return [
+    'Готов к работе — командуйте прямо отсюда, к компьютеру подходить не нужно.',
+    '',
+    archive,
+    '',
+    'Самое нужное:',
+    '/send — отправить всё новое с диска или телефона',
+    '/status — что сейчас происходит',
+    '/random — случайный кадр из архива',
+    '',
+    '/help — весь список команд',
+  ].join('\n');
+}
+
 /* ── цикл long polling ───────────────────────────────────────────────────── */
 
 let stopped = false;
+// Кого и что бот видел с момента запуска: из этого мастер берёт список групп
+// и людей, не дёргая getUpdates второй раз (Telegram разрешает только один).
+const seen = { chats: new Map(), people: new Map() };
+const botStatus = { running: false, startedAt: 0, error: null, greeted: 0 };
+// Через него обрываем висящий запрос к Telegram, когда бота выключают
+let poll = null;
+// Номер запуска: старый цикл, догорая после перезапуска, не должен гасить новый
+let generation = 0;
 
-export function stopBot() {
-  stopped = true;
+export function botState() {
+  return { ...botStatus, chats: seen.chats.size, people: seen.people.size };
 }
 
-export async function runBot() {
+export function botRunning() {
+  return botStatus.running;
+}
+
+/** Группы и каналы, где бот что-то видел за эту сессию. */
+export function seenChats() {
+  return [...seen.chats.values()];
+}
+
+/** Люди, писавшие боту в личку за эту сессию. */
+export function seenPeople() {
+  return [...seen.people.values()];
+}
+
+/** Запоминает, откуда и от кого пришёл апдейт — для списков в мастере. */
+function remember(update) {
+  const chat =
+    update.channel_post?.chat ?? update.message?.chat ??
+    update.my_chat_member?.chat ?? update.edited_channel_post?.chat;
+
+  if (chat && chat.type !== 'private') {
+    seen.chats.set(String(chat.id), {
+      id: String(chat.id),
+      title: chat.title ?? String(chat.id),
+      type: chat.type,
+      isForum: Boolean(chat.is_forum),
+    });
+  }
+
+  const from = update.message?.from ?? update.edited_message?.from;
+  if (from && !from.is_bot && update.message?.chat?.type === 'private') {
+    seen.people.set(String(from.id), {
+      id: String(from.id),
+      name: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || 'Пользователь',
+      username: from.username ?? null,
+    });
+  }
+}
+
+/**
+ * Останавливает бота сразу: висящий long polling обрывается, иначе цикл жил бы
+ * ещё до полминуты и мешал бы новому запуску (Telegram разрешает только один
+ * getUpdates на бота).
+ */
+export function stopBot() {
+  stopped = true;
+  poll?.abort();
+  poll = null;
+  botStatus.running = false;
+}
+
+/**
+ * Слушает команды в личке. Возвращает управление только когда бота остановили,
+ * поэтому мастер запускает её без await и глушит через stopBot().
+ */
+export async function runBot({ greet = true } = {}) {
   if (!config.botToken) throw new Error('TELEGRAM_BOT_TOKEN не задан — команды принимать нечем');
   if (!config.adminIds.length) {
     log.warn('TELEGRAM_ADMIN_IDS пуст: бот будет отвечать только на /id, пока вы не добавите свой id в .env');
   }
 
+  stopped = false;
+  poll = new AbortController();
+  generation += 1;
+  const mine = generation;
+  botStatus.running = true;
+  botStatus.startedAt = Date.now();
+  botStatus.error = null;
+
   await setMyCommands(COMMANDS).catch((err) => log.warn(`setMyCommands: ${err.message}`));
+
+  // «Я на связи» — чтобы не гадать, работает бот или нет
+  if (greet) {
+    for (const id of config.adminIds) {
+      // Со звуком: это единственное сообщение, которое бот шлёт сам, и его ждут
+      await sendMessage(id, greeting(), { disable_notification: false })
+        .catch((err) => log.warn(`Не смог поздороваться с ${id}: ${err.message}`));
+    }
+    botStatus.greeted = Date.now();
+  }
 
   let offset = Number.parseInt(getMeta('bot_update_offset') ?? '0', 10) || 0;
   log.ok('Бот слушает команды. Ctrl+C — выход. Напишите ему /help');
 
-  while (!stopped) {
-    let updates;
-    try {
-      updates = await getUpdates(offset, 30);
-    } catch (err) {
-      log.warn(`getUpdates: ${err.message}`);
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
-    }
-
-    for (const update of updates) {
-      offset = update.update_id + 1;
-      setMeta('bot_update_offset', offset);
-
-      const msg = update.message;
-      if (!msg?.text?.startsWith('/')) continue;
-      // Команды принимаем только в личке с ботом, не в самом хранилище
-      if (msg.chat.type !== 'private') continue;
-
+  try {
+    while (!stopped && generation === mine) {
+      let updates;
       try {
-        await handleCommand(msg);
+        updates = await getUpdates(offset, 30, { signal: poll?.signal });
+        if (generation !== mine) break; // нас перезапустили, пока мы ждали
+        botStatus.error = null;
       } catch (err) {
-        log.error(`Команда «${msg.text}»: ${err.message}`);
-        await sendMessage(msg.chat.id, `Ошибка: ${err.message}`).catch(() => {});
+        if (stopped || generation !== mine || err.name === 'AbortError') break;
+        botStatus.error = err.message;
+        log.warn(`getUpdates: ${err.message}`);
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        setMeta('bot_update_offset', offset);
+        remember(update);
+
+        const msg = update.message;
+        if (!msg?.text?.startsWith('/')) continue;
+        // Команды принимаем только в личке с ботом, не в самом хранилище
+        if (msg.chat.type !== 'private') continue;
+
+        try {
+          await handleCommand(msg);
+        } catch (err) {
+          log.error(`Команда «${msg.text}»: ${err.message}`);
+          await sendMessage(msg.chat.id, `Ошибка: ${err.message}`).catch(() => {});
+        }
       }
     }
+  } finally {
+    // Гасим только если нас не сменил новый запуск
+    if (generation === mine) botStatus.running = false;
   }
 }

@@ -8,7 +8,7 @@ function api(method) {
   return `${config.botApiRoot}/bot${config.botToken}/${method}`;
 }
 
-async function call(method, payload, { retries = 3 } = {}) {
+async function call(method, payload, { retries = 3, signal } = {}) {
   let attempt = 0;
   for (;;) {
     attempt += 1;
@@ -19,8 +19,11 @@ async function call(method, payload, { retries = 3 } = {}) {
         method: 'POST',
         body: isForm ? payload : JSON.stringify(payload),
         headers: isForm ? undefined : { 'content-type': 'application/json' },
+        signal,
       });
     } catch (err) {
+      // Запрос оборвали намеренно (остановили бота) — повторять нечего
+      if (err.name === 'AbortError' || signal?.aborted) throw err;
       if (attempt > retries) throw err;
       const wait = 2 ** attempt * 1000;
       log.warn(`Bot API сеть: ${err.message}. Повтор через ${wait} мс`);
@@ -256,8 +259,16 @@ export async function copyMessage(toChatId, fromChatId, messageId, extra = {}) {
   return result.message_id;
 }
 
-export async function getUpdates(offset, timeoutSec = 30) {
-  return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message'] }, { retries: 2 });
+// Кроме личных сообщений нас интересует, куда бота добавили: по этим апдейтам
+// мастер находит группы и каналы, не спрашивая у пользователя числовой id.
+const WATCHED_UPDATES = ['message', 'edited_message', 'channel_post', 'my_chat_member'];
+
+export async function getUpdates(offset, timeoutSec = 30, { allowedUpdates = WATCHED_UPDATES, signal } = {}) {
+  return call(
+    'getUpdates',
+    { offset, timeout: timeoutSec, allowed_updates: allowedUpdates },
+    { retries: 2, signal },
+  );
 }
 
 /**

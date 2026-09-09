@@ -22,6 +22,7 @@ import {
   downloadMyAvatar, downloadUserPhoto, listGroupMembers, mtprotoConfigured, startWebLogin,
   submitWebLogin, webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
+import { botRunning, botState, runBot, seenChats, seenPeople, stopBot } from '../bot.js';
 import { createProfile, deleteProfile, listProfiles, readProfileEnv, setActiveProfile } from '../profiles.js';
 import {
   avatarPath, isProfileLocked, markProfileLogin, profileStateDir, readProfileStore, saveAvatar,
@@ -49,6 +50,45 @@ function rememberThumb(key, buffer) {
   while (memoryThumbs.size > MEMORY_THUMB_LIMIT) {
     memoryThumbs.delete(memoryThumbs.keys().next().value);
   }
+}
+
+/* ── бот: слушает команды с телефона ─────────────────────────────────────── */
+
+/**
+ * Бот живёт прямо в мастере: отдельную команду запускать не нужно.
+ * Включается сам, как только есть токен и хотя бы один владелец, и здоровается
+ * в личку — чтобы было видно, что всё работает.
+ */
+async function startBot({ greet = true } = {}) {
+  if (botRunning()) return botState();
+  if (!config.botToken) throw new Error('Сначала подключите бота на шаге 2');
+  if (!config.adminIds.length) {
+    throw new Error('Сначала укажите, кто может командовать ботом — на шаге «Как отправлять»');
+  }
+
+  // Без await: цикл опроса живёт, пока бота не остановят
+  runBot({ greet }).catch((err) => log.warn(`Бот остановился: ${err.message}`));
+  // Дадим циклу дойти до приветствия, чтобы состояние вернулось уже настоящим
+  await new Promise((r) => setTimeout(r, 150));
+  return botState();
+}
+
+/** Тихо поднимает бота при старте мастера и после смены профиля. */
+function autoStartBot({ greet = true } = {}) {
+  if (!config.botToken || !config.adminIds.length) return;
+  startBot({ greet }).catch((err) => log.warn(`Бот не запустился: ${err.message}`));
+}
+
+/**
+ * После правки настроек или смены профиля бот должен работать с новым токеном
+ * и новым списком владельцев. Уже работавшего перезапускаем молча, а вот когда
+ * бот включается впервые — здороваемся: это ровно тот момент, когда настройка
+ * закончена и человек ждёт подтверждения.
+ */
+function refreshBot() {
+  const wasRunning = botRunning();
+  if (wasRunning) stopBot();
+  autoStartBot({ greet: !wasRunning });
 }
 
 /* ── фоновая работа (сканирование / отправка) ────────────────────────────── */
@@ -255,6 +295,7 @@ async function buildState() {
     },
     checks: { bot: null, chat: null, account: null },
     job: { ...job, running: Boolean(job.mode), send: sendState() },
+    bot: botState(),
   };
 
   try {
@@ -326,10 +367,16 @@ async function runChecks() {
   return result;
 }
 
-/** Ищет каналы и группы, куда бот уже добавлен: по свежим апдейтам. */
+/**
+ * Ищет каналы и группы, куда бот уже добавлен: по свежим апдейтам.
+ * Пока бот слушает команды, второй getUpdates Telegram не разрешит — тогда
+ * берём то, что бот уже увидел сам.
+ */
 async function detectChats() {
-  const updates = await getUpdates(0, 0);
   const found = new Map();
+
+  const updates = botRunning() ? [] : await getUpdates(0, 0);
+  for (const chat of seenChats()) found.set(chat.id, { ...chat });
 
   for (const u of updates) {
     const chat =
@@ -340,6 +387,16 @@ async function detectChats() {
       title: chat.title ?? String(chat.id),
       type: chat.type,
       isForum: Boolean(chat.is_forum),
+    });
+  }
+
+  // Уже выбранная группа в списке нужна всегда — даже если писать в неё давно перестали
+  if (config.chatId && !found.has(String(config.chatId))) {
+    found.set(String(config.chatId), {
+      id: String(config.chatId),
+      title: readProfileStore().chatTitle || String(config.chatId),
+      type: 'supergroup',
+      isForum: false,
     });
   }
 
@@ -430,7 +487,12 @@ async function detectOwner() {
 
   if (botConfigured()) {
     try {
-      const updates = await getUpdates(0, 0);
+      for (const person of seenPeople()) {
+        if (found.some((f) => f.id === person.id)) continue;
+        found.push({ ...person, source: 'bot' });
+      }
+
+      const updates = botRunning() ? [] : await getUpdates(0, 0);
       for (const u of updates) {
         const msg = u.message ?? u.edited_message;
         if (msg?.chat?.type !== 'private' || !msg.from || msg.from.is_bot) continue;
@@ -446,6 +508,13 @@ async function detectOwner() {
     } catch {
       /* бот не отвечает — вернём то, что есть */
     }
+  }
+
+  // Те, кто писал боту раньше: Telegram отдаёт апдейт один раз, а список
+  // выбора должен оставаться прежним и после перезапуска.
+  for (const [id, person] of Object.entries(readProfileStore().knownPeople ?? {})) {
+    if (found.some((f) => f.id === id)) continue;
+    found.push({ id, name: person.name, username: person.username ?? null, source: 'known' });
   }
 
   // Запоминаем, кто есть кто: чтобы дальше показывать имена, а не числа
@@ -491,7 +560,17 @@ const routes = {
     }
     updateEnv(patch);
     reloadConfig();
+    // Токен и список владельцев мог измениться — бот подхватывает их сразу
+    if (patch.TELEGRAM_BOT_TOKEN !== undefined || patch.TELEGRAM_ADMIN_IDS !== undefined) refreshBot();
     return buildState();
+  },
+
+  /** Включить бота: он сразу напишет владельцу, что готов к работе. */
+  'POST /api/bot/start': async () => startBot(),
+
+  'POST /api/bot/stop': async () => {
+    stopBot();
+    return botState();
   },
 
   'POST /api/checks': async () => runChecks(),
@@ -538,12 +617,14 @@ const routes = {
       return { needsUnlock: true, name, method: lock.type, pinLength: lock.pinLength ?? 4, canCode };
     }
 
-    // У другого профиля свой аккаунт и своя база: старые подключения закрываем.
+    // У другого профиля свой аккаунт, свой бот и своя база: старое закрываем.
+    stopBot();
     await cancelWebLogin();
     await disconnectAccount();
     closeDb();
     setActiveProfile(name);
     reloadConfig();
+    autoStartBot();
     return buildState();
   },
 
@@ -559,11 +640,13 @@ const routes = {
 
     unlockProfile(name);
     if (name !== config.profile) {
+      stopBot();
       await cancelWebLogin();
       await disconnectAccount();
       closeDb();
       setActiveProfile(name);
       reloadConfig();
+      autoStartBot();
     }
     return buildState();
   },
@@ -691,6 +774,7 @@ const routes = {
   },
 
   'POST /api/profiles/delete': async (body) => {
+    if (body?.name === config.profile) stopBot();
     deleteProfile(body?.name);
     return { profiles: listProfiles() };
   },
@@ -955,6 +1039,8 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
     const ALLOWED_WHEN_LOCKED = new Set([
       'GET /api/state', 'GET /api/profiles', 'POST /api/profiles/switch',
       'POST /api/profiles/unlock', 'POST /api/profiles/request-code',
+      // Новый профиль пустой — завести его можно и не открывая закрытый
+      'POST /api/profiles/create',
     ]);
     if (handler && !profileUnlocked(config.profile) && !ALLOWED_WHEN_LOCKED.has(key)) {
       res.writeHead(423, { 'content-type': 'application/json; charset=utf-8' });
@@ -994,6 +1080,11 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
   log.info('Ссылка одноразовая для этого запуска. Ctrl+C — остановить.');
 
   if (open) openBrowser(link);
+
+  // Бот поднимается сам: отдельную команду запускать не нужно, он сразу
+  // напишет владельцу, что готов к работе.
+  autoStartBot();
+
   await new Promise(() => {}); // держим процесс до Ctrl+C
 }
 

@@ -24,7 +24,7 @@
         <span class="account-text"><b>Добавить профиль</b></span>
       </button>
     </div>
-    <div class="side-title">Настройка</div>
+    <div class="side-title">Настройка отправки</div>
     <ul class="nav" id="nav">
       <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
       <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
@@ -33,9 +33,15 @@
       <li><button data-pane="folders"><span class="nav-num" data-num>5</span><span class="nav-label">Что отправлять</span></button></li>
       <li><button data-pane="prefs"><span class="nav-num" data-num>6</span><span class="nav-label">Как отправлять</span></button></li>
       <li><button data-pane="finish"><span class="nav-num" data-num>7</span><span class="nav-label">Проверка и запуск</span></button></li>
-      <li><button data-pane="profile"><span class="nav-num" data-num>8</span><span class="nav-label">Профиль и защита</span></button></li>
-      <li><button data-pane="archive"><span class="nav-num" data-num>9</span><span class="nav-label">База отправленного</span></button></li>
     </ul>
+
+    <div class="side-title">Этот профиль</div>
+    <ul class="nav nav-plain" id="navExtra">
+      <li><button data-pane="profile"><span class="nav-icon">👤</span><span class="nav-label">Профиль и защита</span></button></li>
+      <li><button data-pane="archive"><span class="nav-icon">🗂</span><span class="nav-label">База отправленного</span></button></li>
+      <li><button class="nav-lock" id="lockNow"><span class="nav-icon">🔒</span><span class="nav-label">Закрыть профиль</span></button></li>
+    </ul>
+
     <div class="sidebar-foot">
       Всё, что вы вводите, сохраняется только на этом компьютере — в файл настроек рядом с программой. Никуда больше данные не уходят.
     </div>
@@ -368,7 +374,13 @@
 
       <h2>Что дальше</h2>
       <div class="group">
-        <div class="row"><div class="row-label"><b>Управляйте с телефона</b><small>Запустите <span class="chip">npm run bot</span> — и командуйте боту в личке: /send, /status, /random</small></div></div>
+        <div class="row">
+          <div class="row-label"><b>Управление с телефона</b><small id="botText">—</small></div>
+          <div class="row-side">
+            <span class="pill" id="botPill">—</span>
+            <button class="btn" id="botToggle">—</button>
+          </div>
+        </div>
         <div class="row"><div class="row-label"><b>Диск можно подключать снова</b><small>Программа помнит отправленное и никогда не пришлёт один и тот же снимок дважды</small></div></div>
         <div class="row"><div class="row-label"><b>Разбор старых дублей</b><small id="cleanupText">Проверить, не ушли ли видео Live Photo отдельными сообщениями</small></div><button class="btn" id="doCleanup">Проверить</button></div>
       </div>
@@ -450,10 +462,6 @@
             <label><input type="radio" name="pinlen" value="6"><span>6 цифр</span></label>
           </div>
         </div>
-        <div class="row row-stack" id="lockSecretRow" hidden>
-          <label class="field-label" id="lockSecretLabel">Пароль — минимум 6 символов</label>
-          <input type="password" id="lockSecret" autocomplete="new-password">
-        </div>
         <div class="row">
           <div class="row-label"><b>Закрывать без меня</b><small>Через сколько минут бездействия профиль снова спросит код</small></div>
           <input type="number" id="autoLock" min="1" max="720" style="width:110px">
@@ -462,10 +470,6 @@
           <div class="row-label"><b>Применить</b><small id="lockHint">Код в Telegram приходит вашему боту в личку</small></div>
           <button class="btn btn-primary" id="saveLock">Сохранить защиту</button>
         </div>
-      </div>
-
-      <div class="btn-row">
-        <button class="btn" id="lockNow">Закрыть профиль сейчас</button>
       </div>
 
       <div class="group-title">Опасная зона</div>
@@ -539,6 +543,15 @@
       <button class="btn" id="lockCode">Прислать код в Telegram</button>
     </div>
     <p class="hint" id="lockNote"></p>
+
+    <div class="lock-others" id="lockOthers" hidden>
+      <div class="lock-sep"><span id="lockSepText">или войдите в другой профиль</span></div>
+      <ul class="account-list" id="lockProfiles"></ul>
+      <button class="account account-add" id="lockNewProfile">
+        <span class="account-avatar plus">+</span>
+        <span class="account-text"><b>Добавить профиль</b></span>
+      </button>
+    </div>
   </div>
 </div>
 
