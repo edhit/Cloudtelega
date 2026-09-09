@@ -608,12 +608,19 @@ a { color: var(--accent); }
   width: 44px; height: 44px; flex: none; border-radius: 8px; object-fit: cover;
   background: var(--chip); display: grid; place-items: center; font-size: 18px; color: var(--text-3);
 }
-.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; padding: 12px; }
-.grid-cell { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--chip); display: block; }
-.grid-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.grid-cell .grid-fallback { position: absolute; inset: 0; display: grid; place-items: center; font-size: 22px; color: var(--text-3); }
-.grid-cell .grid-caption {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px;
-  font-size: 10.5px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+/* Плитка без картинок: значок вида файла, дата и имя — картинок тут нет
+   намеренно, их загрузка сажала бота на flood limit Telegram */
+.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; padding: 12px; }
+.grid-cell {
+  display: grid; gap: 6px; place-items: center; align-content: center;
+  aspect-ratio: 1; padding: 10px 8px; border-radius: 10px;
+  background: var(--chip); color: inherit; text-decoration: none;
+}
+a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip)); }
+.grid-cell .grid-fallback { font-size: 24px; line-height: 1; color: var(--text-3); }
+.grid-cell .grid-caption { display: grid; gap: 1px; text-align: center; max-width: 100%; }
+.grid-cell .grid-caption b { font-size: 12px; font-weight: 500; }
+.grid-cell .grid-caption small {
+  font-size: 10.5px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

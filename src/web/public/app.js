@@ -655,7 +655,7 @@ $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
       id: chat.id,
       label: chat.title,
       sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : null].filter(Boolean).join(' · '),
-      photo: chat.photo ? `/api/thumb?file=${encodeURIComponent(chat.photo)}` : null,
+      photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
       isForum: chat.isForum,
     })),
     empty: 'Пока ничего не вижу. Добавьте бота администратором в группу, напишите там любое сообщение и попробуйте снова.',
@@ -1743,22 +1743,13 @@ function statusBadge(status) {
 
 const KIND_ICON = { photo: '🖼', video: '🎬', document: '📄', live_photo: '🌀' };
 
-/** Миниатюру не храним у себя — её отдаёт Telegram по сохранённому идентификатору. */
+/**
+ * Значок вида файла вместо картинки. Настоящие миниатюры программа больше
+ * не тянет: на страницу их приходило до сотни разом, и Telegram за такой
+ * поток запросов сажает бота на flood limit — вместе с отправкой архива.
+ * Сам снимок в один щелчок открывается в Telegram по ссылке.
+ */
 function thumbFor(r, big = false) {
-  if (r.thumb_file_id) {
-    const img = document.createElement('img');
-    img.className = big ? '' : 'thumb';
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.src = `/api/thumb?file=${encodeURIComponent(r.thumb_file_id)}`;
-    img.alt = '';
-    img.addEventListener('error', () => img.replaceWith(fallbackThumb(r, big)));
-    return img;
-  }
-  return fallbackThumb(r, big);
-}
-
-function fallbackThumb(r, big) {
   const box = document.createElement('span');
   box.className = big ? 'grid-fallback' : 'thumb';
   box.textContent = KIND_ICON[r.file_type] ?? KIND_ICON[r.kind] ?? '🖼';
@@ -1780,9 +1771,13 @@ function appendArchiveGrid(rows) {
 
     const caption = document.createElement('span');
     caption.className = 'grid-caption';
-    caption.textContent = r.taken_at
+    const when = document.createElement('b');
+    when.textContent = r.taken_at
       ? new Date(r.taken_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })
-      : r.name;
+      : '—';
+    const who = document.createElement('small');
+    who.textContent = r.name;
+    caption.append(when, who);
     cell.append(caption);
     box.append(cell);
   }

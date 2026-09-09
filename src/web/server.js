@@ -39,16 +39,18 @@ const MIME = {
 };
 
 /**
- * Кэш картинок держим только в памяти: миниатюры и аватары приходят из Telegram
- * и не должны засорять диск. При выходе из программы всё исчезает.
+ * Кэш картинок держим только в памяти: аватары групп и людей приходят из
+ * Telegram и не должны засорять диск. При выходе из программы всё исчезает.
+ * Тут именно аватары — их единицы; миниатюры снимков программа не тянет
+ * совсем, чтобы не сажать бота на flood limit.
  */
-const MEMORY_THUMB_LIMIT = 400;
-const memoryThumbs = new Map();
+const MEMORY_IMAGE_LIMIT = 200;
+const memoryImages = new Map();
 
-function rememberThumb(key, buffer) {
-  memoryThumbs.set(key, buffer);
-  while (memoryThumbs.size > MEMORY_THUMB_LIMIT) {
-    memoryThumbs.delete(memoryThumbs.keys().next().value);
+function rememberImage(key, buffer) {
+  memoryImages.set(key, buffer);
+  while (memoryImages.size > MEMORY_IMAGE_LIMIT) {
+    memoryImages.delete(memoryImages.keys().next().value);
   }
 }
 
@@ -880,18 +882,19 @@ const routes = {
 /* ── сервер ──────────────────────────────────────────────────────────────── */
 
 /**
- * Миниатюры не храним у себя вообще: Telegram уже держит маленькую превьюшку
- * каждого снимка. Тянем её по требованию и держим только в памяти — на диске
- * программы не появляется ни одного лишнего файла.
+ * Аватар группы или канала — по одному на строку списка, то есть единицы
+ * запросов за открытие списка. Миниатюры снимков сюда не ходят: их на страницу
+ * приходило до сотни разом, и Telegram за такой поток сажает бота на flood
+ * limit — вместе с отправкой архива.
  */
-async function serveThumb(req, res, url) {
+async function serveChatPhoto(req, res, url) {
   const fileId = url.searchParams.get('file');
   if (!fileId || !config.botToken) {
     res.writeHead(404).end();
     return;
   }
 
-  const cached = memoryThumbs.get(fileId);
+  const cached = memoryImages.get(fileId);
   if (cached) {
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
     res.end(cached);
@@ -904,7 +907,7 @@ async function serveThumb(req, res, url) {
     if (!response.ok) throw new Error(`Telegram ответил ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    rememberThumb(fileId, buffer);
+    rememberImage(fileId, buffer);
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
     res.end(buffer);
   } catch {
@@ -921,7 +924,7 @@ async function serveUserPhoto(req, res, url) {
   }
 
   const key = `user:${id}`;
-  const cached = memoryThumbs.get(key);
+  const cached = memoryImages.get(key);
   if (cached) {
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' });
     res.end(cached);
@@ -931,7 +934,7 @@ async function serveUserPhoto(req, res, url) {
   try {
     const buffer = await downloadUserPhoto(id);
     if (!buffer) throw new Error('нет фото');
-    rememberThumb(key, buffer);
+    rememberImage(key, buffer);
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' });
     res.end(buffer);
   } catch {
@@ -1033,12 +1036,12 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
       await serveAvatar(req, res, url);
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/thumb') {
+    if (req.method === 'GET' && url.pathname === '/api/chat-photo') {
       if (!profileUnlocked(config.profile)) {
         res.writeHead(423).end();
         return;
       }
-      await serveThumb(req, res, url);
+      await serveChatPhoto(req, res, url);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/user-photo') {
