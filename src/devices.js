@@ -152,44 +152,157 @@ export async function detectPhones() {
   return [...apple.map((d) => ({ ...d, kind: 'ios' })), ...android];
 }
 
-export function mountHint() {
+/* ── как подключить телефон ──────────────────────────────────────────────── */
+
+/**
+ * Инструкции по шагам — свои у каждой системы и у каждого вида телефона.
+ * Команду в шаге пользователь копирует кнопкой, остальное делает руками.
+ */
+const GUIDES = {
+  darwin: {
+    ios: {
+      title: 'iPhone на macOS',
+      lead: 'Как флешка iPhone не подключается — Apple так решила. Есть два пути: простой через готовое приложение и разовый через терминал.',
+      steps: [
+        { text: 'Подключите iPhone кабелем и на телефоне нажмите «Доверять этому компьютеру».' },
+        { text: 'Откройте «Захват изображений» (Image Capture) — он уже есть в macOS, искать в Launchpad.' },
+        { text: 'Слева выберите iPhone, внизу укажите папку, куда сохранять, и нажмите «Импортировать все».' },
+        { text: 'Когда выгрузка закончится, добавьте эту папку в список папок для отправки.' },
+      ],
+      alt: {
+        title: 'Если хочется без копирования — смонтировать телефон как диск',
+        steps: [
+          { text: 'Установите два инструмента (нужен Homebrew):', command: 'brew install libimobiledevice ifuse' },
+          { text: 'Создайте папку и подключите к ней телефон:', command: 'mkdir -p ~/iphone && ifuse ~/iphone' },
+          { text: 'Добавьте в список папок ~/iphone/DCIM. Отключить телефон потом:', command: 'umount ~/iphone' },
+        ],
+      },
+    },
+    android: {
+      title: 'Android на macOS',
+      lead: 'Finder телефон не покажет: Android говорит по протоколу MTP, а macOS его не понимает. Нужен посредник.',
+      steps: [
+        { text: 'Подключите телефон кабелем.' },
+        { text: 'На телефоне опустите шторку, нажмите на уведомление о зарядке и выберите «Передача файлов» (MTP).' },
+        { text: 'Скачайте и откройте Android File Transfer с android.com/filetransfer (или OpenMTP — он удобнее).' },
+        { text: 'Скопируйте из телефона папку DCIM в любую папку на компьютере и добавьте её в список.' },
+      ],
+      alt: {
+        title: 'Через терминал, если так привычнее',
+        steps: [
+          { text: 'Поставьте инструменты Android:', command: 'brew install android-platform-tools' },
+          { text: 'На телефоне включите «Отладку по USB» в разделе «Для разработчиков».' },
+          { text: 'Скопируйте снимки:', command: 'adb pull /sdcard/DCIM ~/android-photos' },
+        ],
+      },
+    },
+  },
+
+  win32: {
+    ios: {
+      title: 'iPhone на Windows',
+      lead: 'Windows показывает iPhone как камеру. Снимки нужно скопировать на диск — читать их прямо с телефона программа не умеет.',
+      steps: [
+        { text: 'Подключите iPhone кабелем и на телефоне нажмите «Доверять этому компьютеру».' },
+        { text: 'Если телефон не появился, установите iTunes (или Apple Devices) — вместе с ним ставятся драйверы.' },
+        { text: 'Откройте Проводник → «Этот компьютер» → Apple iPhone → Internal Storage → DCIM.' },
+        { text: 'Скопируйте папку DCIM на диск, например в «Изображения», и добавьте эту папку в список.' },
+      ],
+      alt: {
+        title: 'Если фото лежат в iCloud, а не на телефоне',
+        steps: [
+          { text: 'Откройте iCloud для Windows и включите «Фото» → «Загружать новые фото на этот компьютер».' },
+          { text: 'Дождитесь выгрузки и добавьте папку iCloud Photos в список.' },
+        ],
+      },
+    },
+    android: {
+      title: 'Android на Windows',
+      lead: 'Телефон подключается по MTP: в Проводнике он виден, но обычной буквы диска у него нет. Снимки нужно скопировать.',
+      steps: [
+        { text: 'Подключите телефон кабелем.' },
+        { text: 'На телефоне опустите шторку, нажмите на уведомление о зарядке и выберите «Передача файлов» (MTP), а не «Только зарядка».' },
+        { text: 'Откройте Проводник → «Этот компьютер» → ваш телефон → Internal Storage → DCIM.' },
+        { text: 'Скопируйте DCIM на диск и добавьте эту папку в список.' },
+      ],
+      alt: {
+        title: 'Заодно стоит забрать снимки из мессенджеров',
+        steps: [
+          { text: 'Рядом с DCIM лежат папки Pictures, Movies и Download — фото из WhatsApp и Telegram обычно там.' },
+          { text: 'Скопируйте и их, если хотите сохранить и эти снимки.' },
+        ],
+      },
+    },
+  },
+
+  linux: {
+    ios: {
+      title: 'iPhone на Linux',
+      lead: 'iPhone подключается через libimobiledevice — тогда он становится обычной папкой.',
+      steps: [
+        { text: 'Установите пакеты:', command: 'sudo apt install libimobiledevice6 libimobiledevice-utils ifuse' },
+        { text: 'Подключите iPhone кабелем и на телефоне нажмите «Доверять этому компьютеру».' },
+        { text: 'Подтвердите пару:', command: 'idevicepair pair' },
+        { text: 'Смонтируйте телефон в папку:', command: 'mkdir -p ~/iphone && ifuse ~/iphone' },
+        { text: 'Добавьте в список папок ~/iphone/DCIM. Отключить телефон потом:', command: 'fusermount -u ~/iphone' },
+      ],
+    },
+    android: {
+      title: 'Android на Linux',
+      lead: 'Обычно телефон появляется в файловом менеджере сам — тогда программа найдёт его без вашей помощи.',
+      steps: [
+        { text: 'Подключите телефон кабелем.' },
+        { text: 'На телефоне опустите шторку, нажмите на уведомление о зарядке и выберите «Передача файлов» (MTP).' },
+        { text: 'Откройте файловый менеджер: телефон должен появиться в списке устройств.' },
+        { text: 'Дальше программа найдёт путь вида /run/user/1000/gvfs/mtp:host=… сама: «Показать диски и телефоны» в мастере или npm run devices.' },
+      ],
+      alt: {
+        title: 'Если телефон так и не появился',
+        steps: [
+          { text: 'Поставьте adb:', command: 'sudo apt install android-tools-adb' },
+          { text: 'На телефоне включите «Отладку по USB» в разделе «Для разработчиков».' },
+          { text: 'Скопируйте снимки в папку:', command: 'adb pull /sdcard/DCIM ~/android-photos' },
+        ],
+      },
+    },
+  },
+};
+
+const PLATFORM_NAMES = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
+
+/** Инструкции для всех систем сразу плюс та, что стоит показать первой. */
+export function connectGuides() {
   const platform = os.platform();
+  return {
+    platform: GUIDES[platform] ? platform : 'linux',
+    detected: PLATFORM_NAMES[platform] ?? platform,
+    known: Boolean(GUIDES[platform]),
+    names: PLATFORM_NAMES,
+    guides: GUIDES,
+  };
+}
 
-  if (platform === 'darwin') {
-    return [
-      'iPhone на macOS не монтируется как флешка:',
-      '  • «Захват изображений» (Image Capture) → выгрузить всё в папку → указать её здесь;',
-      '  • или brew install libimobiledevice ifuse, затем ifuse ~/iphone → ~/iphone/DCIM',
-      '',
-      'Android на macOS: Finder телефон не показывает, нужен посредник:',
-      '  • приложение Android File Transfer (или OpenMTP) → скопировать DCIM в папку;',
-      '  • или brew install android-platform-tools, затем adb pull /sdcard/DCIM ~/android-photos',
-    ].join('\n');
+/** Тот же текст для терминала: в CLI окошек нет. */
+export function mountHint() {
+  const { platform, detected } = connectGuides();
+  const guide = GUIDES[platform];
+  const lines = [`Как подключить телефон (${detected}):`];
+
+  for (const kind of ['ios', 'android']) {
+    const part = guide[kind];
+    lines.push('', part.title, `  ${part.lead}`);
+    part.steps.forEach((step, i) => {
+      lines.push(`  ${i + 1}. ${step.text}`);
+      if (step.command) lines.push(`     ${step.command}`);
+    });
+    if (part.alt) {
+      lines.push(`  ${part.alt.title}`);
+      part.alt.steps.forEach((step, i) => {
+        lines.push(`    ${i + 1}. ${step.text}`);
+        if (step.command) lines.push(`       ${step.command}`);
+      });
+    }
   }
 
-  if (platform === 'linux') {
-    return [
-      'iPhone: sudo apt install libimobiledevice6 libimobiledevice-utils ifuse',
-      '  idevicepair pair && mkdir -p ~/iphone && ifuse ~/iphone   (отключить: fusermount -u ~/iphone)',
-      '',
-      'Android: телефон обычно сам появляется в файловом менеджере (MTP) —',
-      '  тогда путь вида /run/user/1000/gvfs/mtp:host=… программа найдёт сама.',
-      '  Если нет: sudo apt install android-tools-adb, включить «Отладку по USB»,',
-      '  затем adb pull /sdcard/DCIM ~/android-photos',
-      '',
-      'На телефоне при подключении выберите режим «Передача файлов» (MTP), а не «Только зарядка».',
-    ].join('\n');
-  }
-
-  if (platform === 'win32') {
-    return [
-      'И iPhone, и Android Windows показывает как MTP-устройство — напрямую Node их не читает.',
-      '  Проводник → «Этот компьютер» → ваш телефон → Internal Storage → DCIM,',
-      '  скопируйте папку на диск и укажите её здесь.',
-      'На телефоне разрешите доступ: iPhone — «Доверять этому компьютеру»,',
-      'Android — режим подключения «Передача файлов» (MTP).',
-    ].join('\n');
-  }
-
-  return '';
+  return lines.join('\n');
 }

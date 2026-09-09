@@ -793,7 +793,7 @@ function addPath(p) {
 }
 
 async function loadDevices() {
-  const { mounts, phones, hint } = await api('/api/devices');
+  const { mounts, phones, connect } = await api('/api/devices');
   const box = $('#disks');
   box.innerHTML = '';
 
@@ -834,18 +834,149 @@ async function loadDevices() {
     group.append(row);
   }
 
-  if (!mounts.length && !ios.length) {
-    group.innerHTML = '<div class="row"><div class="row-label"><b>Ничего не нашлось</b><small>Подключите диск или iPhone и нажмите ещё раз</small></div></div>';
+  if (!mounts.length && !phones?.length) {
+    group.innerHTML = '<div class="row"><div class="row-label"><b>Ничего не нашлось</b><small>Подключите диск или телефон и нажмите ещё раз — ниже написано, как это сделать</small></div></div>';
   }
   box.append(group);
 
-  if (hint) {
-    const note = document.createElement('div');
-    note.className = 'note';
-    note.innerHTML = '<b>Как подключить телефон</b><span class="prewrap"></span>';
-    note.querySelector('.prewrap').textContent = hint;
-    box.append(note);
+  if (connect) renderConnectGuide(box, connect);
+}
+
+/* ── как подключить телефон: своя инструкция для каждой системы ──────────── */
+
+// Какую систему и какой телефон человек смотрит сейчас
+const guideView = { platform: null, kind: 'ios' };
+
+/**
+ * Инструкцию показываем ту, что подходит этому компьютеру: систему программа
+ * определяет сама. Переключатель систем оставлен на случай, когда настраивают
+ * не для себя — или когда определение промахнулось (например, в WSL).
+ */
+function renderConnectGuide(box, connect) {
+  guideView.platform ??= connect.platform;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'guide';
+
+  const head = document.createElement('div');
+  head.className = 'guide-head';
+
+  const title = document.createElement('div');
+  title.className = 'guide-title';
+  const b = document.createElement('b');
+  b.textContent = 'Как подключить телефон';
+  const small = document.createElement('small');
+  const chosen = connect.names[guideView.platform] ?? guideView.platform;
+  small.textContent = !connect.known
+    ? 'Систему определить не вышло — выберите свою'
+    : guideView.platform === connect.platform
+      ? `Показываю для ${connect.detected} — эту систему программа нашла на вашем компьютере`
+      : `Смотрите инструкцию для ${chosen}, а на этом компьютере — ${connect.detected}`;
+  title.append(b, small);
+
+  const osSeg = document.createElement('div');
+  osSeg.className = 'seg';
+  for (const [id, name] of Object.entries(connect.names)) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'guide-os';
+    input.value = id;
+    input.checked = id === guideView.platform;
+    const span = document.createElement('span');
+    span.textContent = name;
+    input.addEventListener('change', () => {
+      guideView.platform = id;
+      renderConnectGuide(box, connect);
+    });
+    label.append(input, span);
+    osSeg.append(label);
   }
+
+  head.append(title, osSeg);
+  wrap.append(head);
+
+  const kindSeg = document.createElement('div');
+  kindSeg.className = 'seg seg-wide';
+  for (const [id, name] of [['ios', 'iPhone'], ['android', 'Android']]) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'guide-kind';
+    input.value = id;
+    input.checked = id === guideView.kind;
+    const span = document.createElement('span');
+    span.textContent = name;
+    input.addEventListener('change', () => {
+      guideView.kind = id;
+      renderConnectGuide(box, connect);
+    });
+    label.append(input, span);
+    kindSeg.append(label);
+  }
+  wrap.append(kindSeg);
+
+  const guide = connect.guides[guideView.platform]?.[guideView.kind];
+  if (guide) {
+    wrap.append(guideBlock(guide.lead, guide.steps));
+    if (guide.alt) {
+      const altTitle = document.createElement('div');
+      altTitle.className = 'guide-alt';
+      altTitle.textContent = guide.alt.title;
+      wrap.append(altTitle, guideBlock(null, guide.alt.steps));
+    }
+  }
+
+  // Перерисовка на месте: блок инструкции всегда последний
+  box.querySelector('.guide')?.remove();
+  box.append(wrap);
+}
+
+/** Шаги списком; там, где нужна команда, — кнопка «Скопировать». */
+function guideBlock(lead, steps) {
+  const block = document.createElement('div');
+  block.className = 'group guide-body';
+
+  if (lead) {
+    const p = document.createElement('p');
+    p.className = 'guide-lead';
+    p.textContent = lead;
+    block.append(p);
+  }
+
+  const ol = document.createElement('ol');
+  ol.className = 'steps';
+  for (const step of steps) {
+    const li = document.createElement('li');
+    li.textContent = step.text;
+    if (step.command) li.append(commandRow(step.command));
+    ol.append(li);
+  }
+  block.append(ol);
+  return block;
+}
+
+function commandRow(command) {
+  const row = document.createElement('div');
+  row.className = 'cmd';
+
+  const code = document.createElement('code');
+  code.textContent = command;
+
+  const copy = document.createElement('button');
+  copy.className = 'btn btn-small';
+  copy.textContent = 'Скопировать';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      toast('Команда скопирована');
+    } catch {
+      toast('Не вышло скопировать — выделите и скопируйте вручную', true);
+    }
+  });
+
+  row.append(code, copy);
+  return row;
 }
 
 $('#findDisks').addEventListener('click', (e) => guard(e.target, loadDevices));
@@ -1006,6 +1137,22 @@ const WALLPAPERS = [
   { id: 'graphite', css: 'linear-gradient(160deg, #3a3a3c, #2c2c2e 60%, #1c1c1e)' },
 ];
 
+// Направления градиента — словами, а не в градусах: так понятнее
+const GRADIENT_ANGLES = [
+  { id: 'down', angle: 180, label: '↓' },
+  { id: 'diag', angle: 160, label: '↘' },
+  { id: 'right', angle: 90, label: '→' },
+  { id: 'up', angle: 20, label: '↗' },
+];
+
+/** CSS для своего фона: один цвет или переход между двумя. */
+function ownWallpaperCss(wall) {
+  const from = wall?.from ?? '#dfe6f2';
+  if (!wall?.to) return `linear-gradient(180deg, ${from}, ${from})`;
+  const angle = Number.isFinite(wall.angle) ? wall.angle : 160;
+  return `linear-gradient(${angle}deg, ${from}, ${wall.to})`;
+}
+
 /** Тема, цвет и фон — свои у каждого профиля, применяются ко всей странице. */
 function applyStyle(style) {
   if (!style) return;
@@ -1022,6 +1169,9 @@ function applyStyle(style) {
     const preset = WALLPAPERS.find((w) => w.id === wall.value);
     content.style.setProperty('--wallpaper', preset?.css ?? 'none');
     content.classList.toggle('has-wallpaper', Boolean(preset));
+  } else if (wall.type === 'own') {
+    content.style.setProperty('--wallpaper', ownWallpaperCss(wall));
+    content.classList.add('has-wallpaper');
   } else if (wall.type === 'custom') {
     content.style.setProperty('--wallpaper', `url(/api/wallpaper?name=${encodeURIComponent(state?.profile ?? '')}&v=${Date.now()})`);
     content.classList.add('has-wallpaper');
@@ -1051,6 +1201,22 @@ function renderWallpapers(current = { type: 'none' }) {
     box.append(btn);
   }
 
+  // Свой цвет: плитка показывает то, что выбрано, и открывает окно подбора
+  const mine = document.createElement('button');
+  mine.className = 'wall wall-own';
+  mine.title = 'Свой цвет или градиент';
+  mine.setAttribute('aria-pressed', String(current.type === 'own'));
+  mine.style.background = current.type === 'own'
+    ? ownWallpaperCss(current)
+    : 'conic-gradient(from 210deg, #ff9500, #ff2d55, #af52de, #007aff, #34c759, #ff9500)';
+  if (current.type !== 'own') {
+    const plus = document.createElement('span');
+    plus.textContent = '+';
+    mine.append(plus);
+  }
+  mine.addEventListener('click', () => guard(null, () => pickOwnWallpaper(current)));
+  box.append(mine);
+
   if (current.type === 'custom') {
     const own = document.createElement('button');
     own.className = 'wall';
@@ -1059,6 +1225,104 @@ function renderWallpapers(current = { type: 'none' }) {
     own.title = 'Ваша картинка';
     box.append(own);
   }
+}
+
+/**
+ * Свой фон: два цвета, направление перехода и выключатель «однотонный».
+ * Всё видно сразу — большой образец наверху меняется вместе с настройками.
+ */
+async function pickOwnWallpaper(current) {
+  const start = current.type === 'own'
+    ? { from: current.from, to: current.to, angle: current.angle ?? 160 }
+    : { from: '#a8d8ff', to: '#5f8fd0', angle: 160 };
+
+  const picked = await openModal({
+    title: 'Свой фон',
+    text: 'Выберите цвет — или два, чтобы получился переход.',
+    okText: 'Поставить',
+    build: (body) => {
+      const draft = { ...start, gradient: Boolean(start.to) };
+
+      const preview = document.createElement('div');
+      preview.className = 'wall-preview';
+
+      const rows = document.createElement('div');
+      rows.className = 'wall-controls';
+
+      const colorRow = (labelText, key) => {
+        const row = document.createElement('label');
+        row.className = 'wall-row';
+        const name = document.createElement('span');
+        name.textContent = labelText;
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.value = draft[key] ?? '#5f8fd0';
+        input.addEventListener('input', () => { draft[key] = input.value; paint(); });
+        row.append(name, input);
+        return { row, input };
+      };
+
+      const first = colorRow('Цвет', 'from');
+      const second = colorRow('Второй цвет', 'to');
+
+      const toggle = document.createElement('label');
+      toggle.className = 'wall-row';
+      const toggleName = document.createElement('span');
+      toggleName.textContent = 'Переход между цветами';
+      const toggleBox = document.createElement('label');
+      toggleBox.className = 'switch';
+      const toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.checked = draft.gradient;
+      toggleBox.append(toggleInput, document.createElement('span'));
+      toggle.append(toggleName, toggleBox);
+
+      const dirRow = document.createElement('div');
+      dirRow.className = 'wall-row';
+      const dirName = document.createElement('span');
+      dirName.textContent = 'Направление';
+      const dirSeg = document.createElement('div');
+      dirSeg.className = 'seg';
+      for (const dir of GRADIENT_ANGLES) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'wall-dir';
+        input.checked = dir.angle === draft.angle;
+        const span = document.createElement('span');
+        span.textContent = dir.label;
+        input.addEventListener('change', () => { draft.angle = dir.angle; paint(); });
+        label.append(input, span);
+        dirSeg.append(label);
+      }
+      dirRow.append(dirName, dirSeg);
+
+      function paint() {
+        const wall = { from: draft.from, to: draft.gradient ? draft.to : null, angle: draft.angle };
+        preview.style.background = ownWallpaperCss(wall);
+        second.row.hidden = !draft.gradient;
+        dirRow.hidden = !draft.gradient;
+        first.input.parentElement.querySelector('span').textContent = draft.gradient ? 'Первый цвет' : 'Цвет';
+        body.dataset.wall = JSON.stringify(wall);
+      }
+
+      toggleInput.addEventListener('change', () => {
+        draft.gradient = toggleInput.checked;
+        if (draft.gradient && !draft.to) { draft.to = draft.from; second.input.value = draft.from; }
+        paint();
+      });
+
+      rows.append(first.row, toggle, second.row, dirRow);
+      body.append(preview, rows);
+      paint();
+      return first.input;
+    },
+    collect: (body) => JSON.parse(body.dataset.wall),
+  });
+
+  if (!picked) return;
+  await setWallpaper({ type: 'own', ...picked });
+  toast('Фон обновлён');
 }
 
 async function setWallpaper(payload) {

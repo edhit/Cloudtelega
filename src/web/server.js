@@ -9,7 +9,7 @@ import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../co
 import { envExists, envPath, updateEnv } from '../env.js';
 import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, searchFiles, sqliteDriver, stats } from '../db.js';
 import { messageLink } from '../links.js';
-import { detectPhones, inspectMount, listMountPoints, mountHint } from '../devices.js';
+import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
 import { log, humanSize } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
@@ -726,6 +726,23 @@ const routes = {
       return routes['GET /api/profile']();
     }
 
+    // Свой цвет или переход между двумя: хранится тремя числами, места не занимает
+    if (type === 'own') {
+      const hex = (v) => (/^#[0-9a-f]{6}$/i.test(String(v ?? '')) ? String(v).toLowerCase() : null);
+      const from = hex(body?.from);
+      if (!from) throw new Error('Нужен цвет вида #a1b2c3');
+
+      const to = body?.to === null || body?.to === undefined ? null : hex(body.to);
+      if (body?.to && !to) throw new Error('Второй цвет должен быть вида #a1b2c3');
+
+      const angle = Number(body?.angle);
+      await removeWallpaperFile();
+      writeProfileStore({
+        wallpaper: { type: 'own', from, to, angle: Number.isFinite(angle) ? ((angle % 360) + 360) % 360 : 160 },
+      });
+      return routes['GET /api/profile']();
+    }
+
     if (type === 'preset') {
       const value = String(body?.value ?? '').slice(0, 32);
       if (!/^[a-z]+$/.test(value)) throw new Error('Неизвестный фон');
@@ -837,7 +854,8 @@ const routes = {
   'GET /api/devices': async () => {
     const mounts = [];
     for (const m of await listMountPoints()) mounts.push(await inspectMount(m));
-    return { mounts, phones: await detectPhones(), hint: mountHint() };
+    // Инструкции отдаём сразу все, а показываем ту, что подходит этой системе
+    return { mounts, phones: await detectPhones(), connect: connectGuides() };
   },
 
   'POST /api/browse': async (body) => listDirectories(body?.path),
