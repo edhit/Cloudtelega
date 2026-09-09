@@ -36,9 +36,13 @@ export function stemKey(absPath) {
   return `${path.dirname(absPath)}::${normalizeStem(path.basename(absPath))}`;
 }
 
-/** Рекурсивный обход каталога: только медиафайлы, со stat. */
+/**
+ * Рекурсивный обход каталога: только медиафайлы, со stat.
+ * Нечитаемое не пропускаем молча, а складываем в unreadable: на сбойном диске
+ * таких файлов бывают сотни, и человек должен знать, что они не в архиве.
+ */
 export async function scanDir(root, opts = {}) {
-  const { minSize = 1, onProgress } = opts;
+  const { minSize = 1, onProgress, unreadable = [] } = opts;
   const results = [];
   const stack = [root];
   let seen = 0;
@@ -51,7 +55,7 @@ export async function scanDir(root, opts = {}) {
     } catch (err) {
       // Нет прав / устройство отключилось — идём дальше, не роняем обход,
       // но молчать нельзя: иначе «нашлось 0 файлов» выглядит необъяснимо.
-      log.warn(`Не смог прочитать ${dir}: ${explainError(err)}`);
+      unreadable.push({ path: dir, kind: 'dir', code: err.code ?? null, why: explainError(err, { kind: 'file' }) });
       continue;
     }
 
@@ -70,7 +74,7 @@ export async function scanDir(root, opts = {}) {
       try {
         st = await fs.stat(full);
       } catch (err) {
-        log.warn(`Не смог прочитать ${full}: ${explainError(err)}`);
+        unreadable.push({ path: full, kind: 'file', code: err.code ?? null, why: explainError(err, { kind: 'file' }) });
         continue;
       }
       if (st.size < minSize) continue;
@@ -191,6 +195,7 @@ export function collapseDuplicatesByName(files, opts) {
 export async function scanAll(roots, opts = {}) {
   const { since = 0, onDateProgress, prefer, livePhotoVideos } = opts;
   const all = [];
+  const unreadable = [];
 
   for (const root of roots) {
     try {
@@ -200,11 +205,13 @@ export async function scanAll(roots, opts = {}) {
         continue;
       }
     } catch (err) {
-      throw new Error(`Каталог недоступен: ${root} — ${explainError(err)}`);
+      throw new Error(`Каталог недоступен: ${root} — ${explainError(err, { kind: 'file' })}`);
     }
 
-    const found = await scanDir(root, opts);
-    log.info(`${root}: медиафайлов ${found.length}`);
+    const before = unreadable.length;
+    const found = await scanDir(root, { ...opts, unreadable });
+    const broken = unreadable.length - before;
+    log.info(`${root}: медиафайлов ${found.length}${broken ? `, не прочиталось ${broken}` : ''}`);
     all.push(...found);
   }
 
@@ -215,7 +222,24 @@ export async function scanAll(roots, opts = {}) {
 
   // «По порядку» = по дате съёмки, от старых к новым.
   files.sort((a, b) => a.takenAt - b.takenAt || a.absPath.localeCompare(b.absPath));
-  return { files, dropped };
+  return { files, dropped, unreadable };
+}
+
+/** Сводка по нечитаемому: сколько всего и какие коды встретились. */
+export function summarizeUnreadable(unreadable = []) {
+  const byCode = new Map();
+  for (const item of unreadable) {
+    const key = item.code ?? 'unknown';
+    const entry = byCode.get(key) ?? { code: key, n: 0, why: item.why, samples: [] };
+    entry.n += 1;
+    if (entry.samples.length < 5) entry.samples.push(item.path);
+    byCode.set(key, entry);
+  }
+  return {
+    total: unreadable.length,
+    dirs: unreadable.filter((u) => u.kind === 'dir').length,
+    byCode: [...byCode.values()].sort((a, b) => b.n - a.n),
+  };
 }
 
 export function summarize(files) {

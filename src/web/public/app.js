@@ -2020,7 +2020,11 @@ function renderJob(job) {
       <div class="stat"><b>${b.count}</b><small>файлов к отправке</small></div>
       <div class="stat"><b>${humanSize(b.bytes)}</b><small>общий объём</small></div>
       <div class="stat"><b>${b.photos} / ${b.videos}</b><small>фото / видео</small></div>
-      <div class="stat"><b>${b.livePhotos ?? 0}</b><small>Live Photo</small></div>`;
+      <div class="stat"><b>${b.livePhotos ?? 0}</b><small>Live Photo</small></div>` +
+      // Нечитаемое прячем, когда его нет, и показываем красным, когда есть
+      (b.unreadable
+        ? `<div class="stat wide bad"><b>${b.unreadable}</b><small>не прочиталось с диска — в архив не попадут, подробности в логе</small></div>`
+        : '');
   }
 
   // Ошибка целиком остаётся на виду: тост исчезает, а разбираться надо по ней

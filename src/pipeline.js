@@ -56,13 +56,13 @@ function resetState(total) {
 
 /** Сканирует каталоги: даты съёмки, схлопывание пар, сортировка по дате. */
 export async function collect({ roots, since = 0, onDateProgress } = {}) {
-  const { files, dropped } = await scanAll(roots, {
+  const { files, dropped, unreadable } = await scanAll(roots, {
     since,
     prefer: pairPrefer(),
     livePhotoVideos: livePhotoMode(),
     onDateProgress,
   });
-  return { files, dropped, summary: summarize(files) };
+  return { files, dropped, unreadable, summary: summarize(files) };
 }
 
 /**

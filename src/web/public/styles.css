@@ -373,6 +373,9 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .stat { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; }
 .stat.wide { grid-column: 1 / -1; }
+/* Плитка беды: файлы, которые диск не отдал */
+.stat.bad { background: color-mix(in srgb, var(--red) 12%, var(--panel)); }
+.stat.bad b { color: var(--red); }
 .stat b { display: block; font-size: 22px; letter-spacing: -0.02em; }
 .stat small { color: var(--text-2); font-size: 13px; }
 

@@ -54,6 +54,45 @@ const NETWORK_CODES = [
   ['ERR_TLS_CERT_ALTNAME_INVALID', 'сертификат выдан на другое имя', 'Похоже, соединение перехватывает прокси или провайдер.'],
 ];
 
+/**
+ * Коды файловой системы. Отдельно от сетевых: у EACCES и ETIMEDOUT смысл
+ * меняется в зависимости от того, читаем мы диск или ходим в Telegram.
+ */
+const FILE_CODES = [
+  ['EIO', 'диск не смог прочитать файл (ошибка ввода-вывода)',
+   'Это отвечает не программа, а сам накопитель: обычно так проявляются битые сектора, отходящий кабель или сбойный USB-порт. ' +
+   'Переподключите диск в другой порт (лучше без удлинителя и хаба), а если ошибок много — скопируйте с него всё, что читается, на другой носитель: такой диск может окончательно отказать.'],
+  ['ENODEV', 'устройство пропало во время работы',
+   'Диск или телефон отключился: проверьте кабель и снова смонтируйте накопитель.'],
+  ['ENXIO', 'устройство не отвечает',
+   'Накопитель отвалился от системы. Переподключите его и попробуйте снова.'],
+  ['ESTALE', 'система потеряла файл из виду',
+   'Так бывает, когда диск размонтировали или переподключили посреди обхода. Начните заново.'],
+  ['ENOENT', 'файла или папки больше нет',
+   'Проверьте путь: возможно, диск отключился или папку переименовали.'],
+  ['EACCES', 'нет прав на чтение',
+   'Дайте своему пользователю доступ к папке или запустите программу от имени владельца файлов.'],
+  ['EPERM', 'система запретила операцию',
+   'Обычно не хватает прав на файл или мешает антивирус.'],
+  ['EROFS', 'носитель доступен только для чтения',
+   'Файловая система перешла в режим только чтения — так ядро защищается от сбойного диска. Проверьте накопитель.'],
+  ['EBUSY', 'файл занят другой программой',
+   'Закройте приложение, которое держит файл, и попробуйте ещё раз.'],
+  ['ENOSPC', 'на диске кончилось место',
+   'Освободите место: программе нужно куда-то класть временные файлы (TMP_DIR).'],
+  ['EMFILE', 'слишком много открытых файлов',
+   'Системный лимит исчерпан. Закройте лишние программы или поднимите ulimit -n.'],
+  ['ENAMETOOLONG', 'слишком длинное имя файла', 'Переименуйте файл или перенесите его выше по дереву папок.'],
+  ['EISDIR', 'это папка, а не файл', null],
+  ['ENOTDIR', 'в пути оказался файл вместо папки', 'Проверьте путь в списке папок.'],
+];
+
+/** Сбой ли это чтения диска — по этому решается, стоит ли верить итогам обхода. */
+export function isDiskError(err) {
+  const codes = codesOf(err);
+  return FILE_CODES.some(([code]) => codes.includes(code));
+}
+
 // Сбои, у которых нет кода: их узнаём по имени класса или по тексту
 const NAMED_CASES = [
   [(e) => e?.name === 'TimeoutError', 'Telegram не ответил вовремя',
@@ -79,12 +118,14 @@ export function isNetworkError(err) {
  * Ошибка одной строкой, но с настоящей причиной внутри.
  * @returns {string}
  */
-export function explainError(err) {
+export function explainError(err, { kind } = {}) {
   if (!err) return 'неизвестная ошибка';
   if (typeof err === 'string') return err;
 
   const codes = codesOf(err);
-  const match = NETWORK_CODES.find(([code]) => codes.includes(code));
+  // Для файловых операций сперва смотрим коды диска: EACCES у файла и у сети — разное
+  const table = kind === 'file' ? [...FILE_CODES, ...NETWORK_CODES] : [...NETWORK_CODES, ...FILE_CODES];
+  const match = table.find(([code]) => codes.includes(code));
   const cause = rootCause(err);
 
   if (match) {
@@ -106,9 +147,10 @@ export function explainError(err) {
 }
 
 /** Что делать — отдельной строкой, чтобы не мешать самой ошибке. */
-export function adviceFor(err) {
+export function adviceFor(err, { kind } = {}) {
   const codes = codesOf(err);
-  const match = NETWORK_CODES.find(([code]) => codes.includes(code));
+  const table = kind === 'file' ? [...FILE_CODES, ...NETWORK_CODES] : [...NETWORK_CODES, ...FILE_CODES];
+  const match = table.find(([code]) => codes.includes(code));
   if (match) return match[2];
 
   const named = NAMED_CASES.find(([test]) => test(err));
@@ -175,10 +217,10 @@ export function mtprotoAdvice(message = '') {
  * @param {{ kind?: 'bot'|'mtproto', status?: number }} [opts]
  */
 export function describeError(err, { kind, status = 0 } = {}) {
-  const text = explainError(err);
+  const text = explainError(err, { kind });
   const description = err?.description ?? err?.message ?? '';
   const advice =
-    adviceFor(err) ??
+    adviceFor(err, { kind }) ??
     (kind === 'bot' ? botApiAdvice(description, status || err?.code || 0) : null) ??
     (kind === 'mtproto' ? mtprotoAdvice(description) : null);
 

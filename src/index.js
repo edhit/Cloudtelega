@@ -7,7 +7,7 @@ import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import { closeDb, fileIdCoverage, listFailed, listTopics, resetFailed, searchFiles, sqliteDriver, stats } from './db.js';
 import { messageLink } from './links.js';
-import { summarize } from './scanner.js';
+import { summarize, summarizeUnreadable } from './scanner.js';
 import { formatDate } from './dates.js';
 import { detectPhones, inspectMount, listMountPoints, mountHint } from './devices.js';
 import { collect, requestStop, runSend } from './pipeline.js';
@@ -48,7 +48,7 @@ process.on('SIGINT', () => {
 
 /* ── общий вывод сканирования ────────────────────────────────────────────── */
 
-function reportScan({ summary, dropped }) {
+function reportScan({ summary, dropped, unreadable }) {
   log.ok(`К отправке ${summary.count} файлов, ${humanSize(summary.bytes)} (фото ${summary.photos}, видео ${summary.videos}, >50 МБ: ${summary.big})`);
   if (summary.livePhotos) {
     const how = livePhotoMode() === 'live' ? 'уйдут одним сообщением (Live Photo)' : 'видео уйдут отдельно';
@@ -59,6 +59,21 @@ function reportScan({ summary, dropped }) {
     for (const d of dropped.slice(0, 5)) log.plain(`    ${d.file.name} — ${d.reason}`);
     if (dropped.length > 5) log.plain(`    … ещё ${dropped.length - 5}`);
   }
+  reportUnreadable(unreadable);
+}
+
+/** Что диск не отдал: сводка по кодам, а не строка на каждый файл. */
+function reportUnreadable(unreadable = []) {
+  if (!unreadable.length) return;
+  const sum = summarizeUnreadable(unreadable);
+
+  log.error(`Не удалось прочитать: ${sum.total} (папок: ${sum.dirs}). Эти файлы в архив НЕ попали`);
+  for (const group of sum.byCode) {
+    log.warn(`  ${group.n} × ${group.why}`);
+    for (const sample of group.samples) log.plain(`      ${sample}`);
+    if (group.n > group.samples.length) log.plain(`      … ещё ${group.n - group.samples.length}`);
+  }
+  log.error('Пока диск отдаёт ошибки, считать архив полным нельзя — не удаляйте с него ничего');
 }
 
 const onDateProgress = (done, total) => process.stdout.write(`\r  даты съёмки: ${done}/${total}`);

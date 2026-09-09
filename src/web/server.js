@@ -14,6 +14,7 @@ import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../d
 import { log, humanSize, onLog } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
+import { summarizeUnreadable } from '../scanner.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
 import {
   botConfigured, fileUrl, getChat, getChatMember, getFilePath, getMe, getUpdates, sendMessageWithToken,
@@ -146,6 +147,24 @@ function failJob(err) {
   if (err?.stack && process.env.CLOUDTELEGA_DEBUG) note(err.stack, 'error');
 }
 
+/**
+ * Нечитаемое — отдельной сводкой, а не строкой на каждый файл: на сбойном
+ * диске их сотни. И это не мелочь: такие снимки в архив не попали, значит
+ * стирать с диска ничего нельзя.
+ */
+function noteUnreadable(unreadable = []) {
+  if (!unreadable.length) return;
+  const sum = summarizeUnreadable(unreadable);
+
+  note(`Не удалось прочитать: ${sum.total} (из них папок: ${sum.dirs}). Эти файлы в архив НЕ попали`, 'error');
+  for (const group of sum.byCode) {
+    note(`  ${group.n} × ${group.why}`, 'warn');
+    for (const sample of group.samples) note(`    ${sample}`);
+    if (group.n > group.samples.length) note(`    …и ещё ${group.n - group.samples.length}`);
+  }
+  note('Пока диск отдаёт ошибки, считать архив полным нельзя — не удаляйте с него ничего', 'error');
+}
+
 async function startScan() {
   if (job.mode) throw new Error('Уже идёт другая операция');
   const unmirror = beginJob('scan', 'Считаю файлы, хеши и даты съёмки…');
@@ -161,8 +180,8 @@ async function startScan() {
       note(`Даты съёмки: ${done} из ${total} (${percent} %)`);
     },
   })
-    .then(({ summary, dropped, files }) => {
-      job.summary = { ...summary, dropped: dropped.length };
+    .then(({ summary, dropped, files, unreadable }) => {
+      job.summary = { ...summary, dropped: dropped.length, unreadable: unreadable.length };
       note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}`, 'ok');
       // Откуда разница между «медиафайлов на диске» и «файлов к отправке» —
       // без этой строки цифры выглядят необъяснимо
@@ -181,6 +200,7 @@ async function startScan() {
       if (!files.length) {
         note('Отправлять нечего: в указанных папках не нашлось фото и видео', 'warn');
       }
+      noteUnreadable(unreadable);
     })
     .catch(failJob)
     .finally(() => {
@@ -198,10 +218,11 @@ async function startSend() {
   runSend({
     roots: config.scanPaths,
     hooks: {
-      onScanned: ({ summary, dropped }) => {
-        job.summary = { ...summary, dropped: dropped.length };
+      onScanned: ({ summary, dropped, unreadable }) => {
+        job.summary = { ...summary, dropped: dropped.length, unreadable: unreadable?.length ?? 0 };
         note(`Найдено ${summary.count} файлов, ${humanSize(summary.bytes)}. Начинаю отправку…`, 'ok');
         if (dropped.length) note(`Схлопнуто дублей и пар: ${dropped.length}`);
+        noteUnreadable(unreadable);
       },
       onFile: ({ index, total, file, status, error, twin, result, topicId }) => {
         const name = file.relPath || file.name;
