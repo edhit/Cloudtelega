@@ -19,6 +19,168 @@ async function api(path, body) {
   return data;
 }
 
+/* ── модальные окна вместо alert / prompt / confirm ──────────────────────── */
+
+let modalResolve = null;
+
+function closeModal(value) {
+  $('#modal').hidden = true;
+  $('#modalBody').innerHTML = '';
+  const resolve = modalResolve;
+  modalResolve = null;
+  resolve?.(value);
+}
+
+/**
+ * Одно окно на все случаи: подтверждение, ввод текста, ввод кода.
+ * @returns {Promise<any|null>} null — если отменили
+ */
+function openModal({ title, text = '', icon = null, okText = 'Готово', cancelText = 'Отмена', danger = false, build, collect }) {
+  return new Promise((resolve) => {
+    modalResolve = resolve;
+
+    $('#modalTitle').textContent = title;
+    $('#modalText').textContent = text;
+    $('#modalText').hidden = !text;
+    $('#modalIcon').textContent = icon ?? '';
+    $('#modalIcon').hidden = !icon;
+    $('#modalOk').textContent = okText;
+    $('#modalOk').className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+    $('#modalCancel').textContent = cancelText;
+    $('#modalCancel').hidden = !cancelText;
+
+    const body = $('#modalBody');
+    body.innerHTML = '';
+    // Сначала снимаем блокировку, потом строим тело: build может её вернуть обратно
+    $('#modalOk').disabled = false;
+    const focusTarget = build?.(body, { setValid: (ok) => { $('#modalOk').disabled = !ok; } });
+
+    $('#modalOk').onclick = () => {
+      const value = collect ? collect(body) : true;
+      if (value === undefined || value === null || value === false) return;
+      closeModal(value);
+    };
+    $('#modalCancel').onclick = () => closeModal(null);
+
+    $('#modal').hidden = false;
+    setTimeout(() => (focusTarget ?? $('#modalOk')).focus?.(), 60);
+  });
+}
+
+$('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(null); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#modal').hidden) closeModal(null);
+});
+
+/** Подтверждение вместо confirm. */
+const askConfirm = (opts) => openModal({ okText: 'Да', ...opts });
+
+/** Ввод строки вместо prompt. */
+function askText({ title, text, placeholder = '', value = '', okText = 'Готово' }) {
+  let input;
+  return openModal({
+    title,
+    text,
+    okText,
+    build: (body) => {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = placeholder;
+      input.value = value;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#modalOk').click(); });
+      body.append(input);
+      return input;
+    },
+    collect: () => input.value.trim() || null,
+  });
+}
+
+/**
+ * Ввод кода по одной цифре, как на телефоне: сам переходит к следующей ячейке,
+ * понимает Backspace и вставку кода целиком.
+ */
+function buildPinField(body, length, onComplete) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pin';
+
+  const cells = Array.from({ length }, () => {
+    const cell = document.createElement('input');
+    cell.type = 'text';
+    cell.inputMode = 'numeric';
+    cell.autocomplete = 'off';
+    cell.maxLength = 1;
+    wrap.append(cell);
+    return cell;
+  });
+
+  const value = () => cells.map((c) => c.value).join('');
+
+  cells.forEach((cell, i) => {
+    cell.addEventListener('input', () => {
+      cell.value = cell.value.replace(/\D/g, '').slice(-1);
+      if (cell.value && i < length - 1) cells[i + 1].focus();
+      wrap.classList.toggle('filled', value().length === length);
+      if (value().length === length) onComplete?.(value());
+    });
+    cell.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !cell.value && i > 0) cells[i - 1].focus();
+      if (e.key === 'ArrowLeft' && i > 0) cells[i - 1].focus();
+      if (e.key === 'ArrowRight' && i < length - 1) cells[i + 1].focus();
+    });
+    cell.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const digits = (e.clipboardData.getData('text') ?? '').replace(/\D/g, '').slice(0, length);
+      digits.split('').forEach((d, k) => { cells[k].value = d; });
+      cells[Math.min(digits.length, length - 1)].focus();
+      wrap.classList.toggle('filled', value().length === length);
+      if (value().length === length) onComplete?.(value());
+    });
+  });
+
+  body.append(wrap);
+  return { wrap, cells, value, clear: () => { cells.forEach((c) => { c.value = ''; }); cells[0].focus(); } };
+}
+
+function askPin({ title, text, length = 4, okText = 'Готово' }) {
+  let field;
+  return openModal({
+    title,
+    text,
+    okText,
+    build: (body) => {
+      field = buildPinField(body, length, () => setTimeout(() => $('#modalOk').click(), 120));
+      return field.cells[0];
+    },
+    collect: () => (field.value().length === length ? field.value() : null),
+  });
+}
+
+/** Опасное действие: чтобы подтвердить, нужно вписать слово — как при удалении репозитория. */
+function askDangerous({ title, text, confirmWord, okText = 'Удалить' }) {
+  let input;
+  return openModal({
+    title,
+    text,
+    icon: '⚠️',
+    okText,
+    danger: true,
+    build: (body, { setValid }) => {
+      const label = document.createElement('p');
+      label.className = 'hint';
+      label.innerHTML = 'Введите <b></b>, чтобы подтвердить:';
+      label.querySelector('b').textContent = confirmWord;
+      input = document.createElement('input');
+      input.type = 'text';
+      input.autocomplete = 'off';
+      setValid(false);
+      input.addEventListener('input', () => setValid(input.value.trim() === confirmWord));
+      body.append(label, input);
+      return input;
+    },
+    collect: () => (input.value.trim() === confirmWord ? confirmWord : null),
+  });
+}
+
 let toastTimer = null;
 function toast(text, isError = false) {
   const el = $('#toast');
@@ -94,6 +256,89 @@ function markDone(pane, done) {
   num.textContent = done ? '✓' : num.dataset.n ?? num.textContent;
 }
 
+/* ── чипы: показываем имена, а не технические идентификаторы ─────────────── */
+
+function renderChips(box, items, { empty = 'Пока никого', onRemove } = {}) {
+  box.innerHTML = '';
+  if (!items.length) {
+    const hint = document.createElement('span');
+    hint.className = 'chips-empty';
+    hint.textContent = empty;
+    box.append(hint);
+    return;
+  }
+
+  for (const item of items) {
+    const chip = document.createElement('span');
+    chip.className = 'chip-item';
+    chip.title = item.title ?? '';
+
+    const avatar = document.createElement('span');
+    avatar.className = 'chip-avatar';
+    avatar.style.setProperty('--h', hueOf(item.id ?? item.label));
+    avatar.textContent = (item.label ?? '?').slice(0, 1);
+
+    const text = document.createElement('span');
+    text.className = 'chip-text';
+    text.textContent = item.label;
+
+    chip.append(avatar, text);
+
+    if (onRemove) {
+      const x = document.createElement('button');
+      x.className = 'chip-x';
+      x.textContent = '×';
+      x.title = 'Убрать';
+      x.addEventListener('click', () => onRemove(item));
+      chip.append(x);
+    }
+    box.append(chip);
+  }
+}
+
+/** Выбор из списка людей или чатов — вместо ввода числового id. */
+function pickFromList({ title, text, items, empty }) {
+  return openModal({
+    title,
+    text,
+    okText: 'Закрыть',
+    cancelText: '',
+    build: (body) => {
+      const list = document.createElement('div');
+      list.className = 'picker';
+
+      if (!items.length) {
+        const none = document.createElement('p');
+        none.className = 'hint';
+        none.textContent = empty;
+        list.append(none);
+      }
+
+      for (const item of items) {
+        const btn = document.createElement('button');
+        const avatar = document.createElement('span');
+        avatar.className = 'chip-avatar';
+        avatar.style.setProperty('--h', hueOf(item.id ?? item.label));
+        avatar.textContent = (item.label ?? '?').slice(0, 1);
+
+        const wrap = document.createElement('span');
+        const b = document.createElement('b');
+        b.textContent = item.label;
+        const small = document.createElement('small');
+        small.textContent = item.sub ?? '';
+        wrap.append(b, small);
+
+        btn.append(avatar, wrap);
+        btn.addEventListener('click', () => closeModal(item));
+        list.append(btn);
+      }
+      body.append(list);
+      return null;
+    },
+    collect: () => null,
+  });
+}
+
 /* ── профили ─────────────────────────────────────────────────────────────── */
 
 /** Цвет кружка выводим из имени — у каждого профиля свой, но всегда один и тот же. */
@@ -107,7 +352,7 @@ async function switchProfile(name, label) {
   const result = await api('/api/profiles/switch', { name });
 
   if (result.needsUnlock) {
-    showLock({ name, method: result.method, canCode: result.canCode, label });
+    showLock({ name, method: result.method, pinLength: result.pinLength, canCode: result.canCode, label });
     return;
   }
 
@@ -158,12 +403,7 @@ function renderProfiles() {
       del.title = 'Удалить профиль';
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        guard(null, async () => {
-          if (!confirm(`Удалить профиль «${p.name}»? Его настройки и база отправленного будут стёрты. Сообщения в Telegram останутся.`)) return;
-          await api('/api/profiles/delete', { name: p.name });
-          await refresh();
-          toast(`Профиль «${p.name}» удалён`);
-        });
+        guard(null, () => deleteProfileFlow(p.name, label));
       });
       btn.append(del);
     }
@@ -176,13 +416,36 @@ function renderProfiles() {
 }
 
 $('#newProfile').addEventListener('click', () => guard(null, async () => {
-  const name = prompt('Имя профиля — например, имя человека, чей это архив:');
+  const name = await askText({
+    title: 'Новый профиль',
+    text: 'У него будут свои бот, группа, аккаунт и архив — от других профилей он полностью отделён.',
+    placeholder: 'Например, Маша',
+    okText: 'Создать',
+  });
   if (!name) return;
   await api('/api/profiles/create', { name });
   await switchProfile(name);
   toast(`Профиль «${name}» создан — настройте его с первого шага`);
   show('bot');
 }));
+
+/** Удаление профиля со страховкой: нужно вписать его имя. */
+async function deleteProfileFlow(name, label) {
+  const confirmed = await askDangerous({
+    title: `Удалить профиль «${label}»?`,
+    text:
+      'Из программы исчезнут его настройки, ключ от аккаунта Telegram и база отправленного. ' +
+      'Фото и сообщения в самом Telegram останутся на месте — их программа не трогает. ' +
+      'Отменить это будет нельзя.',
+    confirmWord: name,
+    okText: 'Удалить профиль',
+  });
+  if (!confirmed) return;
+
+  await api('/api/profiles/delete', { name });
+  await refresh();
+  toast(`Профиль «${label}» удалён`);
+}
 
 /* ── состояние ───────────────────────────────────────────────────────────── */
 
@@ -192,11 +455,11 @@ async function refresh() {
   renderProfiles();
 
   if (s.botTokenSet) $('#botToken').placeholder = s.botToken;
-  $('#chatId').value = s.chatId || '';
   $('#topicYear').checked = s.topicMode === 'year';
   $('#apiId').value = s.apiId || '';
   if (s.apiHashSet) $('#apiHash').placeholder = s.apiHash;
-  $('#adminIds').value = s.adminIds.join(', ');
+  admins = (s.admins ?? []).map((a) => ({ id: a.id, label: a.name, sub: a.username ? `@${a.username}` : '' }));
+  renderAdminChips();
 
   $$('#segSend input').forEach((i) => { i.checked = i.value === (s.sendAsDocument ? 'doc' : 'feed'); });
   $$('#segLive input').forEach((i) => { i.checked = i.value === s.livePhotoVideos; });
@@ -207,14 +470,15 @@ async function refresh() {
   paths = [...s.scanPaths];
   renderPaths();
 
+  renderChatChip();
   markDone('bot', s.botTokenSet);
   markDone('chat', Boolean(s.chatId));
   markDone('account', s.sessionSet);
   markDone('folders', paths.length > 0);
   markDone('prefs', state.envExists);
 
-  if (s.botTokenSet) pill($('#botStatus'), '', 'токен сохранён');
-  if (s.chatId) pill($('#chatStatus'), '', `сохранён ${s.chatId}`);
+  if (s.botTokenSet) pill($('#botStatus'), '', 'бот подключён');
+  if (s.chatId) pill($('#chatStatus'), '', s.chatTitle ? `группа «${s.chatTitle}»` : 'группа выбрана');
   if (s.sessionSet) pill($('#accountStatus'), 'ok', 'аккаунт подключён');
   if (paths.length) pill($('#pathStatus'), 'ok', `папок: ${paths.length}`);
 
@@ -243,6 +507,24 @@ $('#saveBot').addEventListener('click', (e) => guard(e.target, async () => {
 
 /* ── шаг 2: канал ────────────────────────────────────────────────────────── */
 
+function renderChatChip() {
+  const s = state?.settings ?? {};
+  const items = s.chatId
+    ? [{ id: s.chatId, label: s.chatTitle || 'Группа выбрана', title: 'Подключённая группа' }]
+    : [];
+  renderChips($('#chatChips'), items, { empty: 'Группа ещё не выбрана' });
+}
+
+function selectChatOption(mode) {
+  $('#optionCreate').setAttribute('aria-pressed', String(mode === 'create'));
+  $('#optionExisting').setAttribute('aria-pressed', String(mode === 'existing'));
+  $('#createBlock').hidden = mode !== 'create';
+  $('#existingBlock').hidden = mode !== 'existing';
+}
+
+$('#optionCreate').addEventListener('click', () => selectChatOption('create'));
+$('#optionExisting').addEventListener('click', () => selectChatOption('existing'));
+
 function updateCreateAvailability() {
   const ready = Boolean(state?.settings.sessionSet);
   $('#createGroup').disabled = !ready;
@@ -257,7 +539,6 @@ $('#createGroup').addEventListener('click', (e) => guard(e.target, async () => {
   const topics = $('#groupTopics').checked;
 
   const created = await api('/api/create-group', { title, topics });
-  $('#chatId').value = created.chatId;
   $('#topicYear').checked = created.isForum && topics;
 
   pill($('#chatStatus'), 'ok', `${created.title}${created.isForum ? ' · с темами' : ''}`);
@@ -288,40 +569,45 @@ $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
     btn.textContent = 'Выбрать';
-    btn.addEventListener('click', () => {
-      $('#chatId').value = chat.id;
-      if (!chat.isForum) $('#topicYear').checked = false;
-      toast(`Выбран «${chat.title}» — теперь нажмите «Сохранить и проверить»`);
-    });
+    btn.addEventListener('click', () => guard(btn, async () => {
+      await api('/api/settings', {
+        TELEGRAM_CHAT_ID: chat.id,
+        TOPIC_MODE: chat.isForum && $('#topicYear').checked ? 'year' : 'none',
+      });
+      await refresh();
+      toast(`Выбрана «${chat.title}»`);
+      await checkChat();
+    }));
     row.append(btn);
     box.append(row);
   }
   box.hidden = false;
 }));
 
-$('#saveChat').addEventListener('click', (e) => guard(e.target, async () => {
-  const chatId = extract($('#chatId').value, 'chat');
-  if (!chatId) throw new Error('Укажите канал — кнопкой «Найти мой канал» или вручную');
-
-  await api('/api/settings', {
-    TELEGRAM_CHAT_ID: chatId,
-    TOPIC_MODE: $('#topicYear').checked ? 'year' : 'none',
-  });
-
+async function checkChat() {
   const checks = await api('/api/checks', {});
   if (checks.chat?.ok) {
-    const forum = checks.chat.isForum;
     pill($('#chatStatus'), 'ok', checks.chat.title);
-    if ($('#topicYear').checked && !forum) {
-      pill($('#chatStatus'), 'warn', 'темы не включены');
-      throw new Error('Это не группа с темами. Включите «Темы» в настройках группы или выключите раскладку по годам');
-    }
-    toast(`Канал «${checks.chat.title}» готов принимать файлы`);
     await refresh();
+    if ($('#topicYear').checked && !checks.chat.isForum) {
+      pill($('#chatStatus'), 'warn', 'темы не включены');
+      throw new Error('В этой группе не включены темы. Включите их в настройках группы или выключите папки по годам');
+    }
+    toast(`«${checks.chat.title}» готова принимать файлы`);
   } else {
     pill($('#chatStatus'), 'err', 'нет доступа');
-    throw new Error(checks.chat?.problem ?? 'Канал не найден. Проверьте ID и что бот добавлен администратором');
+    throw new Error(checks.chat?.problem ?? 'Группа не найдена. Проверьте, что бот добавлен администратором');
   }
+}
+
+$('#saveChat').addEventListener('click', (e) => guard(e.target, async () => {
+  if (!state?.settings.chatId) throw new Error('Сначала создайте группу или выберите готовую');
+  await api('/api/settings', { TOPIC_MODE: $('#topicYear').checked ? 'year' : 'none' });
+  await checkChat();
+}));
+
+$('#topicYear').addEventListener('change', () => guard(null, async () => {
+  await api('/api/settings', { TOPIC_MODE: $('#topicYear').checked ? 'year' : 'none' });
 }));
 
 /* ── шаг 3: аккаунт ──────────────────────────────────────────────────────── */
@@ -521,7 +807,6 @@ async function savePrefs() {
     KEEP_HEIC_ORIGINAL: String($('#keepHeic').checked),
     LIVE_PHOTO_VIDEOS: $('#segLive input:checked').value,
     CAPTION_STYLE: $('#segCaption input:checked').value,
-    TELEGRAM_ADMIN_IDS: $('#adminIds').value.replace(/\s/g, ''),
   });
   pill($('#prefsStatus'), 'ok', 'сохранено');
   renderPreview();
@@ -535,18 +820,48 @@ function schedulePrefsSave() {
 
 $$('#segSend input, #segLive input, #segCaption input, #keepHeic').forEach((el) =>
   el.addEventListener('change', schedulePrefsSave));
-$('#adminIds').addEventListener('input', schedulePrefsSave);
+
+
+let admins = [];
+
+function renderAdminChips() {
+  renderChips($('#adminChips'), admins, {
+    empty: 'Пока никто — командовать ботом сможете только из программы',
+    onRemove: (item) => {
+      admins = admins.filter((a) => a.id !== item.id);
+      renderAdminChips();
+      guard(null, saveAdmins);
+    },
+  });
+}
+
+async function saveAdmins() {
+  await api('/api/settings', { TELEGRAM_ADMIN_IDS: admins.map((a) => a.id).join(',') });
+  pill($('#prefsStatus'), 'ok', 'сохранено');
+}
 
 $('#detectOwner').addEventListener('click', (e) => guard(e.target, async () => {
   const { owners } = await api('/api/detect-owner', {});
-  if (!owners.length) {
-    throw new Error('Пока не вижу. Напишите своему боту в Telegram любое сообщение и нажмите ещё раз');
-  }
-  const existing = $('#adminIds').value.split(',').map((x) => x.trim()).filter(Boolean);
-  for (const o of owners) if (!existing.includes(o.id)) existing.push(o.id);
-  $('#adminIds').value = existing.join(', ');
-  $('#ownerHint').textContent = `Нашлось: ${owners.map((o) => `${o.name} (${o.id})`).join(', ')}`;
-  toast('Готово — не забудьте «Сохранить»');
+  const candidates = owners
+    .filter((o) => !admins.some((a) => a.id === o.id))
+    .map((o) => ({
+      id: o.id,
+      label: o.name,
+      sub: o.source === 'account' ? 'ваш аккаунт Telegram' : o.username ? `@${o.username}` : 'писал вашему боту',
+    }));
+
+  const picked = await pickFromList({
+    title: 'Кто может командовать ботом',
+    text: 'Покажу тех, кого узнал. Если нужного человека нет — попросите его написать вашему боту любое сообщение и откройте список снова.',
+    items: candidates,
+    empty: 'Пока никого не нашлось. Напишите боту в Telegram любое сообщение и попробуйте ещё раз.',
+  });
+
+  if (!picked) return;
+  admins.push({ id: picked.id, label: picked.label, sub: picked.sub });
+  renderAdminChips();
+  await saveAdmins();
+  toast(`${picked.label} теперь может командовать ботом`);
 }));
 
 /* ── превью подписи ──────────────────────────────────────────────────────── */
@@ -578,7 +893,17 @@ $$('#segCaption input, #segPreviewKind input').forEach((i) => i.addEventListener
 
 const ACCENTS = ['#007aff', '#34c759', '#ff9500', '#ff2d55', '#af52de', '#5856d6', '#00c7be', '#8e8e93'];
 
-/** Тема и цвет — свои у каждого профиля, применяются ко всей странице. */
+// Готовые фоны — мягкие градиенты, чтобы текст поверх оставался читаемым
+const WALLPAPERS = [
+  { id: 'dawn', css: 'linear-gradient(160deg, #ffd7a8, #ffb3c1 55%, #c9a7ff)' },
+  { id: 'ocean', css: 'linear-gradient(160deg, #a8d8ff, #7fb4e8 60%, #5f8fd0)' },
+  { id: 'mint', css: 'linear-gradient(160deg, #c7f0d8, #9fdcc0 60%, #74c7a8)' },
+  { id: 'sand', css: 'linear-gradient(160deg, #f3e2c7, #e2c9a0 60%, #cbb089)' },
+  { id: 'dusk', css: 'linear-gradient(160deg, #6a7ba8, #4a5578 60%, #2f364f)' },
+  { id: 'graphite', css: 'linear-gradient(160deg, #3a3a3c, #2c2c2e 60%, #1c1c1e)' },
+];
+
+/** Тема, цвет и фон — свои у каждого профиля, применяются ко всей странице. */
 function applyStyle(style) {
   if (!style) return;
   document.documentElement.style.setProperty('--accent', style.accent || '#007aff');
@@ -587,7 +912,73 @@ function applyStyle(style) {
   } else {
     delete document.documentElement.dataset.theme;
   }
+
+  const content = $('.content');
+  const wall = style.wallpaper ?? { type: 'none' };
+  if (wall.type === 'preset') {
+    const preset = WALLPAPERS.find((w) => w.id === wall.value);
+    content.style.setProperty('--wallpaper', preset?.css ?? 'none');
+    content.classList.toggle('has-wallpaper', Boolean(preset));
+  } else if (wall.type === 'custom') {
+    content.style.setProperty('--wallpaper', `url(/api/wallpaper?name=${encodeURIComponent(state?.profile ?? '')}&v=${Date.now()})`);
+    content.classList.add('has-wallpaper');
+  } else {
+    content.classList.remove('has-wallpaper');
+  }
 }
+
+function renderWallpapers(current = { type: 'none' }) {
+  const box = $('#wallpapers');
+  box.innerHTML = '';
+
+  const none = document.createElement('button');
+  none.className = 'wall none';
+  none.textContent = '✕';
+  none.title = 'Без фона';
+  none.setAttribute('aria-pressed', String(current.type === 'none'));
+  none.addEventListener('click', () => guard(null, () => setWallpaper({ type: 'none' })));
+  box.append(none);
+
+  for (const w of WALLPAPERS) {
+    const btn = document.createElement('button');
+    btn.className = 'wall';
+    btn.style.background = w.css;
+    btn.setAttribute('aria-pressed', String(current.type === 'preset' && current.value === w.id));
+    btn.addEventListener('click', () => guard(null, () => setWallpaper({ type: 'preset', value: w.id })));
+    box.append(btn);
+  }
+
+  if (current.type === 'custom') {
+    const own = document.createElement('button');
+    own.className = 'wall';
+    own.style.backgroundImage = `url(/api/wallpaper?name=${encodeURIComponent(state?.profile ?? '')}&v=${Date.now()})`;
+    own.setAttribute('aria-pressed', 'true');
+    own.title = 'Ваша картинка';
+    box.append(own);
+  }
+}
+
+async function setWallpaper(payload) {
+  const { wallpaper } = await api('/api/profile/wallpaper', payload);
+  applyStyle({ ...(state?.style ?? {}), wallpaper });
+  if (state) state.style = { ...(state.style ?? {}), wallpaper };
+  renderWallpapers(wallpaper);
+}
+
+$('#pickWallpaper').addEventListener('click', () => $('#wallpaperInput').click());
+$('#wallpaperInput').addEventListener('change', () => guard(null, async () => {
+  const file = $('#wallpaperInput').files?.[0];
+  if (!file) return;
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  await setWallpaper({ type: 'custom', dataUrl });
+  $('#wallpaperInput').value = '';
+  toast('Фон обновлён');
+}));
 
 function avatarStyle(el, { name, hasAvatar, letter }) {
   el.style.setProperty('--h', hueOf(name));
@@ -638,6 +1029,7 @@ async function loadProfile() {
     : 'до 50 МБ, пока не подключён аккаунт';
 
   renderSwatches(p.accent);
+  renderWallpapers(p.wallpaper ?? { type: 'none' });
   updateLockRow();
 }
 
@@ -662,9 +1054,9 @@ function renderSwatches(active) {
 
 function updateLockRow() {
   const type = $('#segLock input:checked')?.value ?? 'none';
-  $('#lockSecretRow').hidden = type !== 'pin' && type !== 'password';
-  $('#lockSecretLabel').textContent = type === 'pin' ? 'PIN — от 4 до 8 цифр' : 'Пароль — минимум 6 символов';
-  $('#lockSecret').inputMode = type === 'pin' ? 'numeric' : 'text';
+  $('#lockSecretRow').hidden = type !== 'password';
+  $('#pinLengthRow').hidden = type !== 'pin';
+  $('#lockSecretLabel').textContent = 'Пароль — минимум 6 символов';
   $('#lockHint').textContent = type === 'telegram'
     ? (profileData?.canUseTelegramCode
         ? 'Код будет приходить вашему боту в личку'
@@ -705,7 +1097,13 @@ $('#avatarInput').addEventListener('change', () => guard(null, async () => {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-  const alsoTelegram = confirm('Поставить эту картинку и в самом Telegram? Её увидят все ваши собеседники.');
+  const alsoTelegram = Boolean(await askConfirm({
+    title: 'Поставить и в Telegram?',
+    text: 'Картинка станет фото вашего профиля в самом Telegram — её увидят все собеседники. Можно только здесь, в программе.',
+    icon: '🖼',
+    okText: 'И в Telegram',
+    cancelText: 'Только здесь',
+  }));
   await api('/api/profile/avatar', { dataUrl, alsoTelegram });
   $('#avatarInput').value = '';
   await loadProfile();
@@ -724,11 +1122,23 @@ $('#saveTgName').addEventListener('click', (e) => guard(e.target, async () => {
 
 $('#saveLock').addEventListener('click', (e) => guard(e.target, async () => {
   const type = $('#segLock input:checked').value;
-  await api('/api/profile/lock', {
-    type,
-    secret: $('#lockSecret').value,
-    autoLockMinutes: Number($('#autoLock').value) || 30,
-  });
+  let secret = '';
+
+  if (type === 'pin') {
+    const length = Number($('#pinLength input:checked')?.value) || 4;
+    const word = length === 4 ? 'Четыре цифры' : 'Шесть цифр';
+    const first = await askPin({ title: 'Придумайте PIN', text: `${word} — их нужно будет вводить при входе в профиль`, length });
+    if (!first) return;
+    const again = await askPin({ title: 'Повторите PIN', length });
+    if (!again) return;
+    if (first !== again) throw new Error('PIN не совпал — попробуйте ещё раз');
+    secret = first;
+  } else if (type === 'password') {
+    secret = $('#lockSecret').value;
+    if (!secret) throw new Error('Введите пароль');
+  }
+
+  await api('/api/profile/lock', { type, secret, autoLockMinutes: Number($('#autoLock').value) || 30 });
   $('#lockSecret').value = '';
   await loadProfile();
   await refresh();
@@ -741,42 +1151,98 @@ $('#lockNow').addEventListener('click', (e) => guard(e.target, async () => {
   await refresh();
 }));
 
+$('#logoutTelegram').addEventListener('click', (e) => guard(e.target, async () => {
+  const ok = await askConfirm({
+    title: 'Отключить аккаунт Telegram?',
+    text: 'Программа забудет ключ от аккаунта: файлы больше 50 МБ отправляться перестанут, пока не войдёте снова. Архив, настройки и сам аккаунт останутся целыми.',
+    icon: '🔌',
+    okText: 'Отключить',
+    danger: true,
+  });
+  if (!ok) return;
+
+  await api('/api/profile/logout-telegram', {});
+  await loadProfile();
+  await refresh();
+  toast('Аккаунт отключён');
+}));
+
+$('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () => {
+  const label = profileData?.displayName || (state.profile === 'default' ? 'Основной' : state.profile);
+  if (state.profile === 'default') {
+    throw new Error('Основной профиль удалить нельзя — можно отключить аккаунт или удалить другие профили');
+  }
+  // Переключаемся на основной, иначе удалять активный профиль нельзя
+  const target = state.profile;
+  await switchProfile('default', 'Основной');
+  await deleteProfileFlow(target, label);
+}));
+
 /* ── экран замка ─────────────────────────────────────────────────────────── */
 
 let lockTarget = null;
 
-function showLock({ name, method, canCode, label }) {
-  lockTarget = { name, method, canCode };
-  const card = $('#lockscreen');
-  card.hidden = false;
+let lockField = null;
+
+function showLock({ name, method, pinLength = 4, canCode, label }) {
+  lockTarget = { name, method, pinLength, canCode };
+  $('#lockscreen').hidden = false;
 
   avatarStyle($('#lockAvatar'), { name, hasAvatar: true, letter: label ?? name });
   $('#lockTitle').textContent = label ?? (name === 'default' ? 'Основной' : name);
   $('#lockSub').textContent = method === 'telegram'
-    ? 'Запросите код — он придёт вам в Telegram'
+    ? 'Нажмите «Прислать код» — он придёт вам в Telegram'
     : method === 'password' ? 'Введите пароль' : 'Введите PIN';
-  $('#lockInput').type = 'password';
-  $('#lockInput').placeholder = method === 'telegram' ? 'Код из Telegram' : method === 'password' ? 'Пароль' : 'PIN';
-  $('#lockInput').value = '';
-  $('#lockInput').hidden = false;
+
+  const field = $('#lockField');
+  field.innerHTML = '';
+
+  if (method === 'password') {
+    const input = document.createElement('input');
+    input.type = 'password';
+    input.placeholder = 'Пароль';
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') guard(null, submitUnlock); });
+    field.append(input);
+    lockField = { value: () => input.value.trim(), clear: () => { input.value = ''; input.focus(); }, focus: () => input.focus() };
+  } else {
+    // PIN и код из Telegram вводим по одной цифре
+    const length = method === 'telegram' ? 6 : pinLength;
+    const pin = buildPinField(field, length, () => setTimeout(() => guard(null, submitUnlock), 120));
+    lockField = { ...pin, focus: () => pin.cells[0].focus() };
+  }
+
   $('#lockCode').hidden = !(canCode || method === 'telegram');
   $('#lockNote').textContent = method === 'telegram' ? '' : 'Забыли? Можно войти по коду из Telegram';
-  setTimeout(() => $('#lockInput').focus(), 50);
+  setTimeout(() => lockField.focus(), 60);
 }
 
 function hideLock() {
   lockTarget = null;
+  lockField = null;
   $('#lockscreen').hidden = true;
 }
 
 async function submitUnlock() {
-  const value = $('#lockInput').value.trim();
+  const value = lockField?.value() ?? '';
   if (!value) throw new Error('Введите код');
+
   const body = lockTarget.method === 'telegram' || lockTarget.codeSent
     ? { name: lockTarget.name, code: value }
     : { name: lockTarget.name, secret: value };
 
-  state = await api('/api/profiles/unlock', body);
+  try {
+    state = await api('/api/profiles/unlock', body);
+  } catch (err) {
+    // Неверный код: тряхнём поле и дадим ввести заново
+    const wrap = $('#lockField .pin');
+    if (wrap) {
+      wrap.classList.add('shake');
+      setTimeout(() => wrap.classList.remove('shake'), 400);
+    }
+    lockField.clear();
+    throw err;
+  }
+
   hideLock();
   captionSamples = null;
   await refresh();
@@ -785,12 +1251,13 @@ async function submitUnlock() {
 }
 
 $('#lockUnlock').addEventListener('click', (e) => guard(e.target, submitUnlock));
-$('#lockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') guard(null, submitUnlock); });
 
 $('#lockCode').addEventListener('click', (e) => guard(e.target, async () => {
   const res = await api('/api/profiles/request-code', { name: lockTarget.name });
   lockTarget.codeSent = true;
-  $('#lockInput').placeholder = 'Код из Telegram';
+  showLock({ ...lockTarget, method: 'telegram', label: $('#lockTitle').textContent });
+  lockTarget.codeSent = true;
+  $('#lockSub').textContent = 'Введите код из Telegram';
   $('#lockNote').textContent = `Код отправлен (${res.sentTo}), действует 5 минут`;
   toast('Код отправлен в Telegram');
 }));
@@ -805,12 +1272,67 @@ function statusBadge(status) {
   return map[status] ?? ['', status];
 }
 
+const KIND_ICON = { photo: '🖼', video: '🎬', document: '📄', live_photo: '🌀' };
+
+/** Миниатюру не храним у себя — её отдаёт Telegram по сохранённому идентификатору. */
+function thumbFor(r, big = false) {
+  if (r.thumb_file_id) {
+    const img = document.createElement('img');
+    img.className = big ? '' : 'thumb';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = `/api/thumb?file=${encodeURIComponent(r.thumb_file_id)}`;
+    img.alt = '';
+    img.addEventListener('error', () => img.replaceWith(fallbackThumb(r, big)));
+    return img;
+  }
+  return fallbackThumb(r, big);
+}
+
+function fallbackThumb(r, big) {
+  const box = document.createElement('span');
+  box.className = big ? 'grid-fallback' : 'thumb';
+  box.textContent = KIND_ICON[r.file_type] ?? KIND_ICON[r.kind] ?? '🖼';
+  return box;
+}
+
+function appendArchiveGrid(rows) {
+  const box = $('#archiveRows');
+  for (const r of rows) {
+    const cell = r.link ? document.createElement('a') : document.createElement('div');
+    cell.className = 'grid-cell';
+    if (r.link) {
+      cell.href = r.link;
+      cell.target = '_blank';
+      cell.rel = 'noopener';
+    }
+    cell.title = r.rel_path || r.name;
+    cell.append(thumbFor(r, true));
+
+    const caption = document.createElement('span');
+    caption.className = 'grid-caption';
+    caption.textContent = r.taken_at
+      ? new Date(r.taken_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })
+      : r.name;
+    cell.append(caption);
+    box.append(cell);
+  }
+}
+
 function appendArchiveRows(rows) {
+  if ($('#segArchiveView input:checked')?.value === 'grid') {
+    appendArchiveGrid(rows);
+    archiveOffset += rows.length;
+    updateArchiveFooter();
+    return;
+  }
+
   const box = $('#archiveRows');
   for (const r of rows) {
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = '<div class="row-label"><b></b><small></small></div><span class="pill"></span>';
+    row.prepend(thumbFor(r));
 
     const title = row.querySelector('b');
     if (r.link) {
@@ -876,6 +1398,7 @@ async function reloadArchiveRows() {
 
   const box = $('#archiveRows');
   box.innerHTML = '';
+  box.classList.toggle('grid-view', $('#segArchiveView input:checked')?.value === 'grid');
   archiveOffset = 0;
   archiveTotal = page.total;
 
@@ -896,7 +1419,8 @@ $('#archiveSearch').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => guard(null, reloadArchiveRows), 300);
 });
-$$('#segArchiveStatus input').forEach((i) => i.addEventListener('change', () => guard(null, reloadArchiveRows)));
+$$('#segArchiveStatus input, #segArchiveView input').forEach((i) =>
+  i.addEventListener('change', () => guard(null, reloadArchiveRows)));
 
 async function loadArchive() {
   const a = await api('/api/archive').catch((err) => {
@@ -919,6 +1443,7 @@ async function loadArchive() {
 
   const rows = $('#archiveRows');
   rows.innerHTML = '';
+  rows.classList.toggle('grid-view', $('#segArchiveView input:checked')?.value === 'grid');
   archiveOffset = 0;
   archiveTotal = a.page?.total ?? 0;
 
@@ -1040,7 +1565,14 @@ $('#doCleanup').addEventListener('click', (e) => guard(e.target, async () => {
     return;
   }
   $('#cleanupText').textContent = `Нашлось лишних видео: ${r.found}. ${r.items.slice(0, 2).join('; ')}`;
-  if (confirm(`Найдено лишних видео Live Photo: ${r.found}.\n\nУдалить эти сообщения из канала?`)) {
+  const ok = await askConfirm({
+    title: 'Убрать лишние видео?',
+    text: `Найдено ${r.found} видео Live Photo, которые ушли отдельными сообщениями. Их сообщения будут удалены из группы, сами файлы на диске останутся.`,
+    icon: '🧹',
+    okText: 'Удалить',
+    danger: true,
+  });
+  if (ok) {
     const applied = await api('/api/cleanup', { apply: true });
     $('#cleanupText').textContent = `Удалено: ${applied.deleted}`;
     toast(`Удалено сообщений: ${applied.deleted}`);
@@ -1055,7 +1587,7 @@ refresh()
   .then(() => {
     if (state.locked) {
       const me = state.profiles.find((p) => p.active);
-      showLock({ name: state.profile, method: me?.lock ?? 'pin', canCode: true, label: me?.displayName });
+      showLock({ name: state.profile, method: me?.lock ?? 'pin', pinLength: me?.pinLength ?? 4, canCode: true, label: me?.displayName });
       return null;
     }
     return api('/api/job').then(renderJob).catch(() => {});

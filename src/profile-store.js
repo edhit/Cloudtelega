@@ -65,6 +65,8 @@ export function setProfileLock(type, secret, name = profileName()) {
     if (type === 'password' && value.length < 6) throw new Error('Пароль — минимум 6 символов');
     lock.salt = crypto.randomBytes(16).toString('hex');
     lock.hash = hashSecret(value, lock.salt);
+    // Длина PIN нужна, чтобы экран входа нарисовал ровно столько ячеек
+    lock.pinLength = type === 'pin' ? value.length : undefined;
   } else {
     delete lock.salt;
     delete lock.hash;

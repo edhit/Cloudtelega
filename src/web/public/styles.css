@@ -408,3 +408,134 @@ a { color: var(--accent); }
 }
 .lock-card b { display: block; font-size: 18px; }
 .lock-card input { margin-top: 14px; text-align: center; font-size: 17px; letter-spacing: 0.15em; }
+
+/* ── модальные окна ──────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 120;
+  display: grid; place-items: center; padding: 20px;
+  background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(6px);
+  animation: fade 0.15s ease;
+}
+.modal-card {
+  width: min(420px, 100%); text-align: center;
+  background: var(--panel); border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.3);
+  padding: 24px 24px 18px;
+  animation: pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes pop { from { transform: scale(0.94); opacity: 0; } to { transform: none; opacity: 1; } }
+.modal-card > b { display: block; font-size: 18px; letter-spacing: -0.01em; }
+.modal-card .hint { margin: 8px 0 0; }
+.modal-icon { font-size: 34px; line-height: 1; margin-bottom: 8px; }
+.modal-card input[type='text'], .modal-card input[type='password'] { margin-top: 14px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+.modal-actions .btn { flex: 1; }
+
+/* ── ввод кода по одной цифре, как на телефоне ───────────────────────────── */
+
+.pin { display: flex; gap: 10px; justify-content: center; margin: 18px 0 4px; }
+.pin input {
+  width: 46px; height: 56px; padding: 0;
+  text-align: center; font-size: 24px; font-weight: 500;
+  border-radius: 12px; border: 1px solid var(--sep); background: var(--bg); color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.pin input:focus {
+  outline: none; border-color: var(--accent); transform: translateY(-1px);
+  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.pin.filled input { border-color: var(--accent); }
+.pin.shake { animation: shake 0.35s; }
+@keyframes shake {
+  10%, 90% { transform: translateX(-2px); }
+  30%, 70% { transform: translateX(4px); }
+  50% { transform: translateX(-4px); }
+}
+
+/* ── выбор варианта карточками ───────────────────────────────────────────── */
+
+.options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+.option {
+  text-align: left; padding: 16px 18px; border-radius: var(--radius);
+  border: 2px solid transparent; background: var(--panel); box-shadow: var(--shadow);
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.option:hover { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.option[aria-pressed='true'] { border-color: var(--accent); }
+.option-icon { display: block; font-size: 22px; margin-bottom: 6px; }
+.option b { display: block; font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+.option small { color: var(--text-2); font-size: 13px; line-height: 1.4; }
+
+/* ── чипы вместо технических полей ───────────────────────────────────────── */
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 6px 5px 8px; border-radius: 999px;
+  background: var(--chip); font-size: 13.5px; max-width: 100%;
+}
+.chip-item .chip-avatar {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #fff;
+  background: linear-gradient(160deg, hsl(var(--h, 210) 78% 62%), hsl(var(--h, 210) 72% 48%));
+  text-transform: uppercase;
+}
+.chip-item .chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-item .chip-x {
+  width: 20px; height: 20px; flex: none; border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+}
+.chip-item .chip-x:hover { background: var(--red); color: #fff; }
+.chips-empty { color: var(--text-3); font-size: 13px; }
+
+.picker { display: grid; gap: 6px; margin-top: 12px; text-align: left; }
+.picker button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 10px; border: 0; border-radius: 10px;
+  background: var(--bg); color: var(--text); font: inherit; cursor: pointer; text-align: left;
+}
+.picker button:hover { background: var(--chip); }
+.picker b { display: block; font-size: 14px; font-weight: 500; }
+.picker small { display: block; color: var(--text-2); font-size: 12px; }
+
+/* ── обои рабочей области ────────────────────────────────────────────────── */
+
+.walls { display: flex; gap: 10px; flex-wrap: wrap; }
+.wall {
+  width: 62px; height: 46px; border-radius: 10px; padding: 0;
+  border: 2px solid transparent; cursor: pointer; background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.wall[aria-pressed='true'] { border-color: var(--accent); }
+.wall.none { background: var(--bg); display: grid; place-items: center; color: var(--text-3); font-size: 18px; }
+
+/* Фон рисуем под содержимым и притеняем, иначе текст поверх обоев не читается */
+.content { position: relative; }
+.content.has-wallpaper {
+  background-image: var(--wallpaper);
+  background-size: cover; background-position: center; background-attachment: fixed;
+}
+.content.has-wallpaper::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 66%, transparent);
+}
+.content .pane { position: relative; z-index: 1; }
+
+.danger-zone { border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
+
+/* ── плитка миниатюр ─────────────────────────────────────────────────────── */
+
+.thumb {
+  width: 44px; height: 44px; flex: none; border-radius: 8px; object-fit: cover;
+  background: var(--chip); display: grid; place-items: center; font-size: 18px; color: var(--text-3);
+}
+.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; padding: 12px; }
+.grid-cell { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--chip); display: block; }
+.grid-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.grid-cell .grid-fallback { position: absolute; inset: 0; display: grid; place-items: center; font-size: 22px; color: var(--text-3); }
+.grid-cell .grid-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px;
+  font-size: 10.5px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

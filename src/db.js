@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS files (
   file_unique_id TEXT,
   file_type   TEXT,   -- photo | video | document | live_photo | ...
   video_file_id  TEXT,-- видео Live Photo
+  thumb_file_id  TEXT, -- миниатюра, которую хранит сам Telegram
   sent_at     INTEGER,
   attempts    INTEGER NOT NULL DEFAULT 0,
   last_error  TEXT,
@@ -76,6 +77,7 @@ function migrate(d) {
   add('files', 'file_unique_id', 'TEXT');
   add('files', 'file_type', 'TEXT');
   add('files', 'video_file_id', 'TEXT');
+  add('files', 'thumb_file_id', 'TEXT');
   add('hash_cache', 'name', 'TEXT');
 
   // Пересчитываем stem_name: раньше суффикс _HEVC у видео Live Photo не отбрасывался,
@@ -215,12 +217,13 @@ export function upsertPending(file) {
   return findByHash(file.sha256);
 }
 
-export function markSent(sha256, { method, chatId, topicId, messageId, fileId, fileUniqueId, fileType, videoFileId }) {
+export function markSent(sha256, { method, chatId, topicId, messageId, fileId, fileUniqueId, fileType, videoFileId, thumbFileId }) {
   openDb()
     .prepare(
       `UPDATE files
           SET status = 'sent', method = ?, chat_id = ?, topic_id = ?, message_id = ?, sent_at = ?,
-              file_id = ?, file_unique_id = ?, file_type = ?, video_file_id = ?, last_error = NULL
+              file_id = ?, file_unique_id = ?, file_type = ?, video_file_id = ?, thumb_file_id = ?,
+              last_error = NULL
         WHERE sha256 = ?`,
     )
     .run(
@@ -233,6 +236,7 @@ export function markSent(sha256, { method, chatId, topicId, messageId, fileId, f
       fileUniqueId ?? null,
       fileType ?? null,
       videoFileId ?? null,
+      thumbFileId ?? null,
       sha256,
     );
 }
@@ -350,7 +354,8 @@ export function listFiles({ limit = 100, offset = 0 } = {}) {
   const from = Math.max(0, Number(offset) || 0);
   return openDb()
     .prepare(
-      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, file_type, last_error
+      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, topic_id,
+              file_type, thumb_file_id, last_error
          FROM files ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
     .all(size, from);
@@ -391,7 +396,7 @@ export function searchFiles({ query = '', status = '', limit = 100, offset = 0 }
   const rows = d
     .prepare(
       `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, topic_id,
-              file_type, last_error
+              file_type, thumb_file_id, last_error
          FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, size, from);

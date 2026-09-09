@@ -104,54 +104,73 @@
       <h1>Шаг 4. Куда складывать</h1>
       <p class="lead">Нужна приватная <b>группа с темами</b>. Темы — это папки внутри группы: программа заведёт «2019», «2020», «2021» и разложит снимки по годам сама. В канале тем не бывает, поэтому берём именно группу.</p>
 
-      <div class="group-title">Проще всего — доверить программе</div>
+      <div class="options">
+        <button class="option option-primary" id="optionCreate" aria-pressed="true">
+          <span class="option-icon">✨</span>
+          <b>Создать за меня</b>
+          <small>Программа сама сделает группу, включит темы и добавит бота</small>
+        </button>
+        <button class="option" id="optionExisting" aria-pressed="false">
+          <span class="option-icon">📂</span>
+          <b>У меня уже есть</b>
+          <small>Подключить группу или канал, которые вы создали сами</small>
+        </button>
+      </div>
+
+      <div id="createBlock">
+        <div class="group">
+          <div class="row row-stack">
+            <label class="field-label" for="groupTitle">Название группы</label>
+            <input type="text" id="groupTitle" placeholder="Мой фотоархив" value="Мой фотоархив">
+          </div>
+          <div class="row">
+            <div class="row-label"><b>Папки по годам</b><small>Включить темы и раскладывать снимки по годам съёмки</small></div>
+            <label class="switch"><input type="checkbox" id="groupTopics" checked><span></span></label>
+          </div>
+          <div class="row">
+            <div class="row-label"><b>Создать группу</b><small id="createHint">Программа создаст приватную группу, включит темы и сделает бота администратором</small></div>
+            <button class="btn btn-primary" id="createGroup">Создать</button>
+          </div>
+        </div>
+
+        <div class="note" id="needAccount" hidden>
+          Создать группу может только ваш аккаунт — у ботов такого права нет.
+          <a href="#" data-go="account">Вернитесь на шаг 3 и войдите</a>, это займёт минуту.
+          Либо выберите «У меня уже есть» и подключите готовую группу.
+        </div>
+      </div>
+
+      <div id="existingBlock" hidden>
+        <div class="group" style="padding: 18px 20px">
+          <ol class="steps">
+            <li>В Telegram: <b>карандаш</b> (Новое сообщение) → <b>Создать группу</b>. Название любое, участников можно не добавлять.</li>
+            <li>Откройте группу → название сверху → <b>Изменить</b> → <b>Тип группы</b> → <b>Частная группа</b>.</li>
+            <li>Там же <b>Изменить</b> → включите переключатель <b>Темы</b> (в некоторых версиях — <b>Topics</b>). Появятся папки.</li>
+            <li><b>Изменить</b> → <b>Администраторы</b> → <b>Добавить администратора</b> → найдите своего бота. Оставьте <b>Публикация сообщений</b>, <b>Удаление сообщений</b> и <b>Управление темами</b>.</li>
+            <li>Напишите в группе любое сообщение и нажмите кнопку ниже.</li>
+          </ol>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="detectChat">Найти мою группу</button>
+          </div>
+          <div id="chatCandidates" hidden></div>
+        </div>
+      </div>
+
+      <div class="group-title">Куда складываем сейчас</div>
       <div class="group">
-        <div class="row row-stack">
-          <label class="field-label" for="groupTitle">Название группы</label>
-          <input type="text" id="groupTitle" placeholder="Мой фотоархив" value="Мой фотоархив">
+        <div class="row">
+          <div class="row-label"><b>Группа</b><small>Выбирается кнопками выше</small></div>
+          <div class="chips" id="chatChips"></div>
         </div>
         <div class="row">
-          <div class="row-label"><b>Папки по годам</b><small>Включить темы и раскладывать снимки по годам съёмки</small></div>
-          <label class="switch"><input type="checkbox" id="groupTopics" checked><span></span></label>
+          <div class="row-label"><b>Папки по годам</b><small>Раскладывать снимки по темам с годами</small></div>
+          <label class="switch"><input type="checkbox" id="topicYear"><span></span></label>
         </div>
         <div class="row">
-          <div class="row-label"><b>Создать группу за меня</b><small id="createHint">Программа создаст приватную группу, включит темы и сделает бота администратором</small></div>
-          <button class="btn btn-primary" id="createGroup">Создать</button>
+          <div class="row-label"><b>Проверить связь</b><small>Убедимся, что бот может писать в эту группу</small></div>
+          <button class="btn btn-primary" id="saveChat">Проверить</button>
         </div>
       </div>
-
-      <div class="note" id="needAccount" hidden>
-        Создать группу может только ваш аккаунт — у ботов такого права нет.
-        <a href="#" data-go="account">Вернитесь на шаг 3 и войдите</a>, это займёт минуту.
-        Либо создайте группу руками по инструкции ниже.
-      </div>
-
-      <details class="group" style="padding: 14px 18px">
-        <summary style="cursor:pointer; font-weight:500">У меня уже есть группа или канал — подключить вручную</summary>
-        <ol class="steps" style="margin-top:16px">
-          <li>В Telegram: <b>карандаш</b> (Новое сообщение) → <b>Создать группу</b>. Название любое, участников можно не добавлять.</li>
-          <li>Откройте группу → название сверху → <b>Изменить</b> → <b>Тип группы</b> → <b>Частная группа</b>.</li>
-          <li>Там же <b>Изменить</b> → включите переключатель <b>Темы</b> (в некоторых версиях — <b>Topics</b> или <b>Обсуждения по темам</b>). Группа превратится в форум: появятся папки.</li>
-          <li><b>Изменить</b> → <b>Администраторы</b> → <b>Добавить администратора</b> → найдите своего бота по username. Оставьте включёнными <b>Публикация сообщений</b>, <b>Удаление сообщений</b> и <b>Управление темами</b>.</li>
-          <li>Напишите в группе любое сообщение и нажмите кнопку ниже — программа сама найдёт её.</li>
-        </ol>
-        <div class="btn-row">
-          <button class="btn btn-primary" id="detectChat">Найти мою группу</button>
-        </div>
-        <div id="chatCandidates" hidden></div>
-        <div style="margin-top:14px">
-          <label class="field-label" for="chatId">Или впишите ID вручную</label>
-          <input type="text" id="chatId" class="mono" placeholder="-1001234567890" autocomplete="off" spellcheck="false">
-          <p class="hint">ID приватной группы и канала всегда начинается с <span class="chip">-100</span>.</p>
-        </div>
-        <div class="btn-row">
-          <label style="display:flex; align-items:center; gap:10px">
-            <span>Папки по годам</span>
-            <span class="switch"><input type="checkbox" id="topicYear"><span></span></span>
-          </label>
-          <button class="btn btn-primary" id="saveChat">Подключить группу</button>
-        </div>
-      </details>
 
       <div class="btn-row">
         <span id="chatStatus" class="pill">не проверено</span>
@@ -310,11 +329,11 @@
       <div class="group-title">Управление из Telegram</div>
       <div class="group">
         <div class="row row-stack">
-          <label class="field-label" for="adminIds">Кто может командовать ботом</label>
-          <input type="text" id="adminIds" class="mono" placeholder="123456789">
+          <label class="field-label">Кто может командовать ботом</label>
+          <div class="chips" id="adminChips"></div>
           <div class="btn-row">
-            <button class="btn" id="detectOwner">Определить меня автоматически</button>
-            <span class="hint" style="margin:0" id="ownerHint">Если вошли в аккаунт — возьму id оттуда. Иначе напишите боту любое сообщение и нажмите кнопку</span>
+            <button class="btn" id="detectOwner">Добавить человека</button>
+            <span class="hint" style="margin:0" id="ownerHint">Покажу тех, кто уже писал боту, и ваш аккаунт</span>
           </div>
         </div>
       </div>
@@ -394,6 +413,14 @@
           <button class="btn" id="pickAvatar">Выбрать файл…</button>
           <input type="file" id="avatarInput" accept="image/*" hidden>
         </div>
+        <div class="row row-stack">
+          <div class="row-label" style="margin-bottom:10px"><b>Фон рабочей области</b><small>Как обои в чатах Telegram — свои у каждого профиля</small></div>
+          <div class="walls" id="wallpapers"></div>
+          <div class="btn-row">
+            <button class="btn" id="pickWallpaper">Загрузить свою…</button>
+            <input type="file" id="wallpaperInput" accept="image/*" hidden>
+          </div>
+        </div>
       </div>
 
       <div class="group-title">Аккаунт в Telegram</div>
@@ -420,8 +447,15 @@
             <label><input type="radio" name="lock" value="telegram"><span>Код в Telegram</span></label>
           </div>
         </div>
+        <div class="row" id="pinLengthRow" hidden>
+          <div class="row-label"><b>Длина PIN</b><small>Вводится по одной цифре, как на телефоне</small></div>
+          <div class="seg" id="pinLength">
+            <label><input type="radio" name="pinlen" value="4" checked><span>4 цифры</span></label>
+            <label><input type="radio" name="pinlen" value="6"><span>6 цифр</span></label>
+          </div>
+        </div>
         <div class="row row-stack" id="lockSecretRow" hidden>
-          <label class="field-label" id="lockSecretLabel">PIN — от 4 до 8 цифр</label>
+          <label class="field-label" id="lockSecretLabel">Пароль — минимум 6 символов</label>
           <input type="password" id="lockSecret" autocomplete="new-password">
         </div>
         <div class="row">
@@ -436,6 +470,18 @@
 
       <div class="btn-row">
         <button class="btn" id="lockNow">Закрыть профиль сейчас</button>
+      </div>
+
+      <div class="group-title">Опасная зона</div>
+      <div class="group danger-zone">
+        <div class="row">
+          <div class="row-label"><b>Отключить аккаунт Telegram</b><small>Программа забудет ключ от аккаунта. Архив, настройки и сам аккаунт останутся</small></div>
+          <button class="btn btn-danger" id="logoutTelegram">Отключить</button>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Удалить профиль из программы</b><small>Сотрёт настройки, ключ и базу отправленного. Фото и сообщения в Telegram останутся</small></div>
+          <button class="btn btn-danger" id="deleteProfile">Удалить…</button>
+        </div>
       </div>
     </section>
 
@@ -460,7 +506,13 @@
         <p class="hint">Нажмите на найденный файл — откроется само сообщение в Telegram.</p>
       </div>
 
-      <div class="group-title" id="archiveRowsTitle">Что внутри</div>
+      <div class="btn-row" style="justify-content:space-between">
+        <span class="group-title" id="archiveRowsTitle" style="padding:0">Что внутри</span>
+        <div class="seg" id="segArchiveView">
+          <label><input type="radio" name="archview" value="list" checked><span>Списком</span></label>
+          <label><input type="radio" name="archview" value="grid"><span>Плиткой</span></label>
+        </div>
+      </div>
       <div class="group" id="archiveRows"></div>
       <div class="btn-row" id="archiveMoreRow" hidden>
         <button class="btn" id="archiveMore">Показать ещё 100</button>
@@ -485,12 +537,25 @@
     <div class="profile-avatar big" id="lockAvatar"></div>
     <b id="lockTitle">Профиль закрыт</b>
     <p class="hint" id="lockSub">Введите PIN, чтобы продолжить</p>
-    <input type="password" id="lockInput" placeholder="PIN" autocomplete="off">
+    <div id="lockField"></div>
     <div class="btn-row" style="justify-content:center">
       <button class="btn btn-primary" id="lockUnlock">Войти</button>
       <button class="btn" id="lockCode">Прислать код в Telegram</button>
     </div>
     <p class="hint" id="lockNote"></p>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-icon" id="modalIcon" hidden></div>
+    <b id="modalTitle"></b>
+    <p class="hint" id="modalText"></p>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel">Отмена</button>
+      <button class="btn btn-primary" id="modalOk">Готово</button>
+    </div>
   </div>
 </div>
 

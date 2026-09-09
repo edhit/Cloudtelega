@@ -62,24 +62,38 @@ async function call(method, payload, { retries = 3 } = {}) {
 /** Достаёт file_id из ответа Telegram: его можно переиспользовать без повторной загрузки. */
 export function extractMedia(msg) {
   if (msg?.live_photo) {
-    const still = msg.live_photo.photo?.at(-1);
+    const sizes = msg.live_photo.photo ?? [];
     return {
       fileType: 'live_photo',
-      fileId: still?.file_id ?? null,
-      fileUniqueId: still?.file_unique_id ?? null,
+      fileId: sizes.at(-1)?.file_id ?? null,
+      fileUniqueId: sizes.at(-1)?.file_unique_id ?? null,
       videoFileId: msg.live_photo.file_id ?? null,
+      // Самый маленький размер — готовая миниатюра, её отдаёт сам Telegram
+      thumbFileId: sizes[0]?.file_id ?? null,
     };
   }
   if (msg?.photo?.length) {
     const best = msg.photo.at(-1); // последний размер — самый большой
-    return { fileType: 'photo', fileId: best.file_id, fileUniqueId: best.file_unique_id, videoFileId: null };
+    return {
+      fileType: 'photo',
+      fileId: best.file_id,
+      fileUniqueId: best.file_unique_id,
+      videoFileId: null,
+      thumbFileId: msg.photo[0]?.file_id ?? null,
+    };
   }
   for (const key of ['video', 'animation', 'document', 'audio', 'voice', 'video_note']) {
     if (msg?.[key]) {
-      return { fileType: key, fileId: msg[key].file_id, fileUniqueId: msg[key].file_unique_id, videoFileId: null };
+      return {
+        fileType: key,
+        fileId: msg[key].file_id,
+        fileUniqueId: msg[key].file_unique_id,
+        videoFileId: null,
+        thumbFileId: msg[key].thumbnail?.file_id ?? msg[key].thumb?.file_id ?? null,
+      };
     }
   }
-  return { fileType: null, fileId: null, fileUniqueId: null, videoFileId: null };
+  return { fileType: null, fileId: null, fileUniqueId: null, videoFileId: null, thumbFileId: null };
 }
 
 export function botConfigured() {
@@ -91,6 +105,16 @@ export async function getMe() {
 }
 
 /** Права бота в чате: без права публиковать сообщения ничего не выйдет. */
+/** Путь к файлу на серверах Telegram — по нему миниатюру можно скачать. */
+export async function getFilePath(fileId) {
+  const file = await call('getFile', { file_id: fileId }, { retries: 1 });
+  return file.file_path;
+}
+
+export function fileUrl(filePath) {
+  return `${config.botApiRoot}/file/bot${config.botToken}/${filePath}`;
+}
+
 export async function getChatMember(chatId, userId) {
   return call('getChatMember', { chat_id: chatId, user_id: userId });
 }

@@ -15,7 +15,7 @@ import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
 import {
-  botConfigured, getChat, getChatMember, getMe, getUpdates, sendMessageWithToken,
+  botConfigured, fileUrl, getChat, getChatMember, getFilePath, getMe, getUpdates, sendMessageWithToken,
 } from '../telegram/botApi.js';
 import {
   accountInfo, cancelWebLogin, createStorageGroup, disconnect as disconnectAccount,
@@ -24,7 +24,7 @@ import {
 } from '../telegram/mtproto.js';
 import { createProfile, deleteProfile, listProfiles, readProfileEnv, setActiveProfile } from '../profiles.js';
 import {
-  avatarPath, isProfileLocked, markProfileLogin, readProfileStore, saveAvatar,
+  avatarPath, isProfileLocked, markProfileLogin, profileStateDir, readProfileStore, saveAvatar,
   setProfileLock, verifyProfileSecret, writeProfileStore,
 } from '../profile-store.js';
 
@@ -187,6 +187,7 @@ function profileCards() {
       hasAvatar: Boolean(avatarPath(p.name)),
       accent: store.accent,
       lock: store.lock.type,
+      pinLength: store.lock.pinLength ?? 4,
       locked: isProfileLocked(p.name) && !profileUnlocked(p.name),
       lastLoginAt: store.lastLoginAt,
       username: store.telegram?.username ?? null,
@@ -208,7 +209,7 @@ async function buildState() {
     profile: config.profile,
     profiles: profileCards(),
     locked: !profileUnlocked(config.profile),
-    style: (({ displayName, accent, theme }) => ({ displayName, accent, theme }))(readProfileStore()),
+    style: (({ displayName, accent, theme, wallpaper }) => ({ displayName, accent, theme, wallpaper }))(readProfileStore()),
     settings: {
       botToken: mask(config.botToken, 6),
       botTokenSet: Boolean(config.botToken),
@@ -230,6 +231,12 @@ async function buildState() {
       effectivePairPrefer: pairPrefer(),
       captionStyle: config.captionStyle,
       adminIds: config.adminIds,
+      // Имена вместо чисел: id остаются внутри, пользователю их видеть незачем
+      admins: config.adminIds.map((id) => {
+        const known = readProfileStore().knownPeople?.[id];
+        return { id, name: known?.name ?? 'Владелец', username: known?.username ?? null };
+      }),
+      chatTitle: readProfileStore().chatTitle ?? '',
       sendDelayMs: config.sendDelayMs,
     },
     checks: { bot: null, chat: null, account: null },
@@ -268,9 +275,11 @@ async function runChecks() {
           const canPost =
             member?.status === 'creator' ||
             (member?.status === 'administrator' && member?.can_post_messages !== false);
+          const title = chat.title ?? chat.username ?? String(chat.id);
+          writeProfileStore({ chatTitle: title });
           result.chat = {
             ok: canPost,
-            title: chat.title ?? chat.username ?? String(chat.id),
+            title,
             type: chat.type,
             isForum: Boolean(chat.is_forum),
             status: member?.status ?? 'unknown',
@@ -364,7 +373,8 @@ async function detectOwner() {
       const me = await whoAmI();
       found.push({
         id: String(me.id),
-        name: [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username || 'ваш аккаунт',
+        name: [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username || 'Ваш аккаунт',
+        username: me.username ?? null,
         source: 'account',
       });
     } catch {
@@ -382,13 +392,21 @@ async function detectOwner() {
         if (found.some((f) => f.id === id)) continue;
         found.push({
           id,
-          name: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') || msg.from.username || id,
+          name: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') || msg.from.username || 'Пользователь',
+          username: msg.from.username ?? null,
           source: 'bot',
         });
       }
     } catch {
       /* бот не отвечает — вернём то, что есть */
     }
+  }
+
+  // Запоминаем, кто есть кто: чтобы дальше показывать имена, а не числа
+  if (found.length) {
+    const known = { ...(readProfileStore().knownPeople ?? {}) };
+    for (const person of found) known[person.id] = { name: person.name, username: person.username ?? null };
+    writeProfileStore({ knownPeople: known });
   }
 
   return found;
@@ -471,7 +489,7 @@ const routes = {
       const { lock } = readProfileStore(name);
       const env = readProfileEnv(name);
       const canCode = Boolean(env.TELEGRAM_BOT_TOKEN && String(env.TELEGRAM_ADMIN_IDS ?? '').trim());
-      return { needsUnlock: true, name, method: lock.type, canCode };
+      return { needsUnlock: true, name, method: lock.type, pinLength: lock.pinLength ?? 4, canCode };
     }
 
     // У другого профиля свой аккаунт и своя база: старые подключения закрываем.
@@ -522,7 +540,8 @@ const routes = {
       theme: store.theme,
       hasAvatar: Boolean(avatarPath()),
       telegram: store.telegram,
-      lock: { type: store.lock.type, autoLockMinutes: store.lock.autoLockMinutes },
+      lock: { type: store.lock.type, autoLockMinutes: store.lock.autoLockMinutes, pinLength: store.lock.pinLength ?? 4 },
+      wallpaper: store.wallpaper ?? { type: 'none' },
       lastLoginAt: store.lastLoginAt,
       canUseTelegramCode: Boolean(config.botToken && config.adminIds.length),
     };
@@ -576,6 +595,35 @@ const routes = {
     });
     writeProfileStore({ telegram: { ...info, updatedAt: Date.now() } });
     return info;
+  },
+
+  /** Фон рабочей области: готовый набор, своя картинка или без фона. */
+  'POST /api/profile/wallpaper': async (body) => {
+    const type = body?.type ?? 'none';
+
+    if (type === 'none') writeProfileStore({ wallpaper: { type: 'none' } });
+    else if (type === 'preset') writeProfileStore({ wallpaper: { type: 'preset', value: String(body.value ?? '').slice(0, 32) } });
+    else if (type === 'custom') {
+      const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/i.exec(String(body?.dataUrl ?? ''));
+      if (!match) throw new Error('Нужна картинка PNG, JPEG или WebP');
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 12 * 1024 * 1024) throw new Error('Картинка больше 12 МБ');
+      const file = 'wallpaper.jpg';
+      await fs.mkdir(profileStateDir(), { recursive: true });
+      await fs.writeFile(path.join(profileStateDir(), file), buffer);
+      writeProfileStore({ wallpaper: { type: 'custom', file } });
+    } else throw new Error('Неизвестный фон');
+
+    return { wallpaper: readProfileStore().wallpaper };
+  },
+
+  /** Отключить аккаунт Telegram: ключ сессии стирается, архив и настройки остаются. */
+  'POST /api/profile/logout-telegram': async () => {
+    await disconnectAccount();
+    updateEnv({ TELEGRAM_SESSION: ' ' });
+    reloadConfig();
+    writeProfileStore({ telegram: null });
+    return { ok: true };
   },
 
   'POST /api/profile/lock': async (body) => {
@@ -677,6 +725,62 @@ const routes = {
 
 /* ── сервер ──────────────────────────────────────────────────────────────── */
 
+/**
+ * Миниатюры не храним у себя: Telegram уже держит маленькую превьюшку каждого
+ * снимка. Тянем её по требованию и кладём в кэш во временной папке.
+ */
+async function serveThumb(req, res, url) {
+  const fileId = url.searchParams.get('file');
+  if (!fileId || !config.botToken) {
+    res.writeHead(404).end();
+    return;
+  }
+
+  const cacheDir = path.join(config.tmpDir, 'thumbs');
+  const cacheFile = path.join(cacheDir, `${crypto.createHash('sha1').update(fileId).digest('hex')}.jpg`);
+
+  try {
+    const cached = await fs.readFile(cacheFile);
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
+    res.end(cached);
+    return;
+  } catch {
+    /* в кэше нет — качаем */
+  }
+
+  try {
+    const filePath = await getFilePath(fileId);
+    const response = await fetch(fileUrl(filePath));
+    if (!response.ok) throw new Error(`Telegram ответил ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(cacheFile, buffer);
+
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
+    res.end(buffer);
+  } catch {
+    res.writeHead(404).end();
+  }
+}
+
+/** Обои рабочей области, если пользователь загрузил свою картинку. */
+async function serveWallpaper(req, res, url) {
+  const name = url.searchParams.get('name') || config.profile;
+  const store = readProfileStore(name);
+  if (store.wallpaper?.type !== 'custom' || !store.wallpaper.file) {
+    res.writeHead(404).end();
+    return;
+  }
+  try {
+    const data = await fs.readFile(path.join(profileStateDir(name), store.wallpaper.file));
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' });
+    res.end(data);
+  } catch {
+    res.writeHead(404).end();
+  }
+}
+
 /** Аватар профиля отдаём как обычную картинку. */
 async function serveAvatar(req, res, url) {
   const name = url.searchParams.get('name') || config.profile;
@@ -749,6 +853,18 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
 
     if (req.method === 'GET' && url.pathname === '/api/avatar') {
       await serveAvatar(req, res, url);
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/thumb') {
+      if (!profileUnlocked(config.profile)) {
+        res.writeHead(423).end();
+        return;
+      }
+      await serveThumb(req, res, url);
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/wallpaper') {
+      await serveWallpaper(req, res, url);
       return;
     }
 

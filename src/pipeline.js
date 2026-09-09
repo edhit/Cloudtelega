@@ -202,6 +202,7 @@ export async function runSend({ roots, since = 0, limit = Infinity, dryRun = fal
           fileUniqueId: firstResult.fileUniqueId,
           fileType: firstResult.fileType,
           videoFileId: firstResult.videoFileId,
+          thumbFileId: firstResult.thumbFileId,
         });
         // Видео Live Photo ушло вместе с кадром — записываем и его, чтобы оно
         // не отправилось повторно, если попадётся в другой папке.
