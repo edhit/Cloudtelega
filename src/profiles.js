@@ -105,6 +105,24 @@ export function listProfiles() {
   });
 }
 
+/**
+ * Читает настройки чужого профиля, не переключаясь на него.
+ * Нужно, например, чтобы отправить код входа ботом того профиля.
+ */
+export function readProfileEnv(name) {
+  const result = {};
+  try {
+    const text = fs.readFileSync(profileEnvPath(name), 'utf8');
+    for (const line of text.split('\n')) {
+      const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+      if (m) result[m[1]] = m[2].replace(/^"(.*)"$/, '$1');
+    }
+  } catch {
+    /* профиль не настроен */
+  }
+  return result;
+}
+
 export function deleteProfile(rawName) {
   const name = sanitizeName(rawName);
   if (name === DEFAULT_PROFILE) throw new Error('Профиль по умолчанию удалить нельзя');

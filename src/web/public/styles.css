@@ -14,27 +14,55 @@
   --chip: rgba(120, 120, 128, 0.12);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.04);
   --radius: 12px;
+  color-scheme: light;
 }
 
+/* Тёмная тема: по системе — если пользователь не выбрал светлую явно */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #000000;
-    --panel: #1c1c1e;
-    --sidebar: #161618;
-    --text: #f2f2f7;
-    --text-2: #a1a1a6;
-    --text-3: #7c7c81;
-    --sep: rgba(84, 84, 88, 0.4);
-    --accent: #0a84ff;
-    --green: #30d158;
-    --orange: #ff9f0a;
-    --red: #ff453a;
-    --chip: rgba(120, 120, 128, 0.24);
-    --shadow: none;
+  :root:not([data-theme='light']) {
+  --bg: #000000;
+  --panel: #1c1c1e;
+  --sidebar: #161618;
+  --text: #f2f2f7;
+  --text-2: #a1a1a6;
+  --text-3: #7c7c81;
+  --sep: rgba(84, 84, 88, 0.4);
+  --accent: #0a84ff;
+  --green: #30d158;
+  --orange: #ff9f0a;
+  --red: #ff453a;
+  --chip: rgba(120, 120, 128, 0.24);
+  --shadow: none;
+  color-scheme: dark;
   }
 }
 
+/* Явный выбор темы в профиле сильнее системного */
+:root[data-theme='dark'] {
+  --bg: #000000;
+  --panel: #1c1c1e;
+  --sidebar: #161618;
+  --text: #f2f2f7;
+  --text-2: #a1a1a6;
+  --text-3: #7c7c81;
+  --sep: rgba(84, 84, 88, 0.4);
+  --accent: #0a84ff;
+  --green: #30d158;
+  --orange: #ff9f0a;
+  --red: #ff453a;
+  --chip: rgba(120, 120, 128, 0.24);
+  --shadow: none;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 * { box-sizing: border-box; }
+
+/* Скрытое должно быть скрытым: иначе display у .lockscreen перебивает атрибут hidden */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -338,3 +366,45 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
 details summary::-webkit-details-marker { color: var(--accent); }
 details[open] summary { margin-bottom: 4px; }
 a { color: var(--accent); }
+
+/* ── профиль ─────────────────────────────────────────────────────────────── */
+
+.profile-head {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 18px 20px; margin-bottom: 18px;
+}
+.profile-avatar {
+  width: 64px; height: 64px; flex: none; border-radius: 50%;
+  background: linear-gradient(160deg, hsl(var(--h, 210) 78% 62%), hsl(var(--h, 210) 72% 48%));
+  background-size: cover; background-position: center;
+  display: grid; place-items: center;
+  color: #fff; font-size: 26px; font-weight: 600; text-transform: uppercase;
+}
+.profile-avatar.big { width: 84px; height: 84px; font-size: 34px; margin: 0 auto 14px; }
+.profile-head-text { flex: 1; min-width: 0; }
+.profile-head-text b { display: block; font-size: 19px; letter-spacing: -0.01em; }
+.profile-head-text small { display: block; color: var(--text-2); font-size: 13px; margin-top: 2px; }
+
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch {
+  width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent;
+  cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.swatch[aria-pressed='true'] { border-color: var(--text); }
+
+/* ── экран замка ─────────────────────────────────────────────────────────── */
+
+.lockscreen {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+.lock-card {
+  width: min(360px, 90vw); text-align: center;
+  background: var(--panel); border-radius: 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  padding: 28px 26px;
+}
+.lock-card b { display: block; font-size: 18px; }
+.lock-card input { margin-top: 14px; text-align: center; font-size: 17px; letter-spacing: 0.15em; }

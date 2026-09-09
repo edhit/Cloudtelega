@@ -78,6 +78,7 @@ function show(pane) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
   if (pane === 'archive') loadArchive();
+  if (pane === 'profile') loadProfile();
   if (pane === 'folders') loadDevices();
   if (pane === 'chat') updateCreateAvailability();
   if (pane === 'prefs') renderPreview();
@@ -102,12 +103,20 @@ function hueOf(name) {
   return hash;
 }
 
-async function switchProfile(name) {
-  state = await api('/api/profiles/switch', { name });
+async function switchProfile(name, label) {
+  const result = await api('/api/profiles/switch', { name });
+
+  if (result.needsUnlock) {
+    showLock({ name, method: result.method, canCode: result.canCode, label });
+    return;
+  }
+
+  state = result;
   captionSamples = null;
   archiveOffset = 0;
+  profileData = null;
   await refresh();
-  toast(`Профиль: ${name}`);
+  toast(`Профиль: ${label ?? name}`);
   show('start');
 }
 
@@ -121,19 +130,23 @@ function renderProfiles() {
     btn.className = 'account';
     btn.setAttribute('aria-current', String(p.active));
 
-    const label = p.name === 'default' ? 'Основной' : p.name;
+    const label = p.displayName || (p.name === 'default' ? 'Основной' : p.name);
 
     const avatar = document.createElement('span');
     avatar.className = 'account-avatar';
-    avatar.style.setProperty('--h', hueOf(p.name));
-    avatar.textContent = label.slice(0, 1);
+    avatarStyle(avatar, { name: p.name, hasAvatar: p.hasAvatar, letter: label });
 
     const text = document.createElement('span');
     text.className = 'account-text';
     const title = document.createElement('b');
     title.textContent = label;
     const sub = document.createElement('small');
-    sub.textContent = p.configured ? 'настроен' : 'не настроен';
+    const marks = [];
+    if (p.lock !== 'none') marks.push(p.locked ? '🔒 закрыт' : '🔓 открыт');
+    if (!p.configured) marks.push('не настроен');
+    else if (p.lastLoginAt) marks.push(`вход ${timeAgo(p.lastLoginAt)}`);
+    else marks.push('настроен');
+    sub.textContent = marks.join(' · ');
     text.append(title, sub);
 
     btn.append(avatar, text);
@@ -155,7 +168,8 @@ function renderProfiles() {
       btn.append(del);
     }
 
-    if (!p.active) btn.addEventListener('click', () => guard(null, () => switchProfile(p.name)));
+    if (p.active) btn.addEventListener('click', () => show('profile'));
+    else btn.addEventListener('click', () => guard(null, () => switchProfile(p.name, label)));
     li.append(btn);
     list.append(li);
   }
@@ -189,6 +203,7 @@ async function refresh() {
   $$('#segCaption input').forEach((i) => { i.checked = i.value === s.captionStyle; });
   $('#keepHeic').checked = s.keepHeicOriginal;
 
+  applyStyle(state.style);
   paths = [...s.scanPaths];
   renderPaths();
 
@@ -389,6 +404,7 @@ function renderPaths() {
     del.addEventListener('click', () => {
       paths = paths.filter((x) => x !== p);
       renderPaths();
+      guard(null, savePaths);
     });
     row.append(span, del);
     list.append(row);
@@ -399,6 +415,7 @@ function addPath(p) {
   if (!paths.includes(p)) paths.push(p);
   renderPaths();
   toast(`Добавлено: ${p}`);
+  guard(null, savePaths);
 }
 
 async function loadDevices() {
@@ -488,29 +505,37 @@ async function browseTo(target) {
 
 $('#addPath').addEventListener('click', (e) => guard(e.target, () => browseTo(null)));
 
-$('#savePaths').addEventListener('click', (e) => guard(e.target, async () => {
-  if (!paths.length) throw new Error('Добавьте хотя бы одну папку');
+/** Папки сохраняются сразу — отдельной кнопки «Сохранить» нет. */
+async function savePaths() {
   await api('/api/settings', { SCAN_PATHS: paths.join(',') });
-  pill($('#pathStatus'), 'ok', `папок: ${paths.length}`);
-  toast('Папки сохранены');
-  await refresh();
-}));
+  pill($('#pathStatus'), paths.length ? 'ok' : '', paths.length ? `сохранено, папок: ${paths.length}` : 'папки не выбраны');
+}
 
 /* ── шаг 5: настройки ────────────────────────────────────────────────────── */
 
-$('#savePrefs').addEventListener('click', (e) => guard(e.target, async () => {
-  const asDoc = $('#segSend input:checked').value === 'doc';
+/** Настройки применяются сразу, как в системных настройках. */
+async function savePrefs() {
+  pill($('#prefsStatus'), '', 'сохраняю…');
   await api('/api/settings', {
-    SEND_AS_DOCUMENT: String(asDoc),
+    SEND_AS_DOCUMENT: String($('#segSend input:checked').value === 'doc'),
     KEEP_HEIC_ORIGINAL: String($('#keepHeic').checked),
     LIVE_PHOTO_VIDEOS: $('#segLive input:checked').value,
     CAPTION_STYLE: $('#segCaption input:checked').value,
     TELEGRAM_ADMIN_IDS: $('#adminIds').value.replace(/\s/g, ''),
   });
   pill($('#prefsStatus'), 'ok', 'сохранено');
-  toast('Настройки сохранены');
-  await refresh();
-}));
+  renderPreview();
+}
+
+let prefsTimer = null;
+function schedulePrefsSave() {
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => guard(null, savePrefs), 350);
+}
+
+$$('#segSend input, #segLive input, #segCaption input, #keepHeic').forEach((el) =>
+  el.addEventListener('change', schedulePrefsSave));
+$('#adminIds').addEventListener('input', schedulePrefsSave);
 
 $('#detectOwner').addEventListener('click', (e) => guard(e.target, async () => {
   const { owners } = await api('/api/detect-owner', {});
@@ -548,6 +573,227 @@ async function renderPreview() {
 }
 
 $$('#segCaption input, #segPreviewKind input').forEach((i) => i.addEventListener('change', renderPreview));
+
+/* ── профиль: оформление, аккаунт, защита ────────────────────────────────── */
+
+const ACCENTS = ['#007aff', '#34c759', '#ff9500', '#ff2d55', '#af52de', '#5856d6', '#00c7be', '#8e8e93'];
+
+/** Тема и цвет — свои у каждого профиля, применяются ко всей странице. */
+function applyStyle(style) {
+  if (!style) return;
+  document.documentElement.style.setProperty('--accent', style.accent || '#007aff');
+  if (style.theme === 'light' || style.theme === 'dark') {
+    document.documentElement.dataset.theme = style.theme;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+}
+
+function avatarStyle(el, { name, hasAvatar, letter }) {
+  el.style.setProperty('--h', hueOf(name));
+  if (hasAvatar) {
+    el.style.backgroundImage = `url(/api/avatar?name=${encodeURIComponent(name)}&v=${Date.now()})`;
+    el.textContent = '';
+  } else {
+    el.style.backgroundImage = '';
+    el.textContent = (letter || name || '?').slice(0, 1);
+  }
+}
+
+const timeAgo = (ms) => {
+  if (!ms) return 'ещё ни разу';
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 1) return 'только что';
+  if (mins < 60) return `${mins} мин назад`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return new Date(ms).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+let profileData = null;
+
+async function loadProfile() {
+  profileData = await api('/api/profile');
+  const p = profileData;
+  const label = p.displayName || p.telegram?.name || (p.name === 'default' ? 'Основной' : p.name);
+
+  avatarStyle($('#profileAvatar'), { name: p.name, hasAvatar: p.hasAvatar, letter: label });
+  $('#profileTitle').textContent = label;
+  $('#profileSub').textContent = p.telegram
+    ? [p.telegram.username ? `@${p.telegram.username}` : null, p.telegram.phone, p.telegram.premium ? 'Premium' : null]
+        .filter(Boolean).join(' · ')
+    : 'Аккаунт Telegram не подключён';
+  $('#profileLast').textContent = `Последний вход: ${timeAgo(p.lastLoginAt)}`;
+
+  $('#displayName').value = p.displayName ?? '';
+  $$('#segTheme input').forEach((i) => { i.checked = i.value === p.theme; });
+  $$('#segLock input').forEach((i) => { i.checked = i.value === p.lock.type; });
+  $('#autoLock').value = p.lock.autoLockMinutes ?? 30;
+  $('#tgFirstName').value = p.telegram?.firstName ?? '';
+  $('#tgLastName').value = p.telegram?.lastName ?? '';
+  $('#tgLimit').textContent = p.telegram
+    ? p.telegram.premium
+      ? 'до 4 ГБ — у аккаунта есть Premium'
+      : 'до 2 ГБ (с Telegram Premium стало бы 4 ГБ)'
+    : 'до 50 МБ, пока не подключён аккаунт';
+
+  renderSwatches(p.accent);
+  updateLockRow();
+}
+
+function renderSwatches(active) {
+  const box = $('#accentSwatches');
+  box.innerHTML = '';
+  for (const color of ACCENTS) {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.style.background = color;
+    b.setAttribute('aria-pressed', String(color === active));
+    b.title = color;
+    b.addEventListener('click', () => guard(null, async () => {
+      const saved = await api('/api/profile', { accent: color });
+      applyStyle(saved);
+      renderSwatches(saved.accent);
+      await refresh();
+    }));
+    box.append(b);
+  }
+}
+
+function updateLockRow() {
+  const type = $('#segLock input:checked')?.value ?? 'none';
+  $('#lockSecretRow').hidden = type !== 'pin' && type !== 'password';
+  $('#lockSecretLabel').textContent = type === 'pin' ? 'PIN — от 4 до 8 цифр' : 'Пароль — минимум 6 символов';
+  $('#lockSecret').inputMode = type === 'pin' ? 'numeric' : 'text';
+  $('#lockHint').textContent = type === 'telegram'
+    ? (profileData?.canUseTelegramCode
+        ? 'Код будет приходить вашему боту в личку'
+        : 'Нужны бот и ваш id в списке владельцев — иначе код прислать некуда')
+    : type === 'none'
+      ? 'Профиль будет открываться сразу'
+      : 'Забудете — можно будет войти по коду из Telegram';
+}
+
+$$('#segLock input').forEach((i) => i.addEventListener('change', updateLockRow));
+
+$('#displayName').addEventListener('input', () => {
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => guard(null, async () => {
+    await api('/api/profile', { displayName: $('#displayName').value });
+    await refresh();
+  }), 400);
+});
+
+$$('#segTheme input').forEach((i) => i.addEventListener('change', () => guard(null, async () => {
+  applyStyle(await api('/api/profile', { theme: i.value }));
+})));
+
+$('#refreshTelegram').addEventListener('click', (e) => guard(e.target, async () => {
+  await api('/api/profile/refresh-telegram', {});
+  await loadProfile();
+  await refresh();
+  toast('Имя и аватар взяты из Telegram');
+}));
+
+$('#pickAvatar').addEventListener('click', () => $('#avatarInput').click());
+$('#avatarInput').addEventListener('change', () => guard(null, async () => {
+  const file = $('#avatarInput').files?.[0];
+  if (!file) return;
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const alsoTelegram = confirm('Поставить эту картинку и в самом Telegram? Её увидят все ваши собеседники.');
+  await api('/api/profile/avatar', { dataUrl, alsoTelegram });
+  $('#avatarInput').value = '';
+  await loadProfile();
+  await refresh();
+  toast(alsoTelegram ? 'Аватар обновлён здесь и в Telegram' : 'Аватар обновлён');
+}));
+
+$('#saveTgName').addEventListener('click', (e) => guard(e.target, async () => {
+  await api('/api/profile/telegram-name', {
+    firstName: $('#tgFirstName').value.trim(),
+    lastName: $('#tgLastName').value.trim(),
+  });
+  await loadProfile();
+  toast('Имя изменено в Telegram');
+}));
+
+$('#saveLock').addEventListener('click', (e) => guard(e.target, async () => {
+  const type = $('#segLock input:checked').value;
+  await api('/api/profile/lock', {
+    type,
+    secret: $('#lockSecret').value,
+    autoLockMinutes: Number($('#autoLock').value) || 30,
+  });
+  $('#lockSecret').value = '';
+  await loadProfile();
+  await refresh();
+  toast(type === 'none' ? 'Защита выключена' : 'Защита включена');
+}));
+
+$('#lockNow').addEventListener('click', (e) => guard(e.target, async () => {
+  const { locked } = await api('/api/profiles/lock-now', {});
+  if (!locked) throw new Error('У профиля нет защиты — сначала включите PIN, пароль или код');
+  await refresh();
+}));
+
+/* ── экран замка ─────────────────────────────────────────────────────────── */
+
+let lockTarget = null;
+
+function showLock({ name, method, canCode, label }) {
+  lockTarget = { name, method, canCode };
+  const card = $('#lockscreen');
+  card.hidden = false;
+
+  avatarStyle($('#lockAvatar'), { name, hasAvatar: true, letter: label ?? name });
+  $('#lockTitle').textContent = label ?? (name === 'default' ? 'Основной' : name);
+  $('#lockSub').textContent = method === 'telegram'
+    ? 'Запросите код — он придёт вам в Telegram'
+    : method === 'password' ? 'Введите пароль' : 'Введите PIN';
+  $('#lockInput').type = 'password';
+  $('#lockInput').placeholder = method === 'telegram' ? 'Код из Telegram' : method === 'password' ? 'Пароль' : 'PIN';
+  $('#lockInput').value = '';
+  $('#lockInput').hidden = false;
+  $('#lockCode').hidden = !(canCode || method === 'telegram');
+  $('#lockNote').textContent = method === 'telegram' ? '' : 'Забыли? Можно войти по коду из Telegram';
+  setTimeout(() => $('#lockInput').focus(), 50);
+}
+
+function hideLock() {
+  lockTarget = null;
+  $('#lockscreen').hidden = true;
+}
+
+async function submitUnlock() {
+  const value = $('#lockInput').value.trim();
+  if (!value) throw new Error('Введите код');
+  const body = lockTarget.method === 'telegram' || lockTarget.codeSent
+    ? { name: lockTarget.name, code: value }
+    : { name: lockTarget.name, secret: value };
+
+  state = await api('/api/profiles/unlock', body);
+  hideLock();
+  captionSamples = null;
+  await refresh();
+  toast('Добро пожаловать');
+  show('start');
+}
+
+$('#lockUnlock').addEventListener('click', (e) => guard(e.target, submitUnlock));
+$('#lockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') guard(null, submitUnlock); });
+
+$('#lockCode').addEventListener('click', (e) => guard(e.target, async () => {
+  const res = await api('/api/profiles/request-code', { name: lockTarget.name });
+  lockTarget.codeSent = true;
+  $('#lockInput').placeholder = 'Код из Telegram';
+  $('#lockNote').textContent = `Код отправлен (${res.sentTo}), действует 5 минут`;
+  toast('Код отправлен в Telegram');
+}));
 
 /* ── база отправленного ──────────────────────────────────────────────────── */
 
@@ -725,8 +971,6 @@ async function runChecks() {
   }
 }
 
-$('#recheck').addEventListener('click', (e) => guard(e.target, runChecks));
-
 function renderJob(job) {
   const running = job.running;
   $('#doStop').hidden = !(running && job.mode === 'send');
@@ -808,5 +1052,12 @@ $('#doCleanup').addEventListener('click', (e) => guard(e.target, async () => {
 $$('#nav .nav-num').forEach((n) => { n.dataset.n = n.textContent; });
 
 refresh()
-  .then(() => api('/api/job').then(renderJob).catch(() => {}))
+  .then(() => {
+    if (state.locked) {
+      const me = state.profiles.find((p) => p.active);
+      showLock({ name: state.profile, method: me?.lock ?? 'pin', canCode: true, label: me?.displayName });
+      return null;
+    }
+    return api('/api/job').then(renderJob).catch(() => {});
+  })
   .catch((err) => toast(err.message, true));

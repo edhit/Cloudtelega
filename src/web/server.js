@@ -14,12 +14,19 @@ import { log, humanSize } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
-import { botConfigured, getChat, getChatMember, getMe, getUpdates } from '../telegram/botApi.js';
 import {
-  cancelWebLogin, createStorageGroup, disconnect as disconnectAccount, mtprotoConfigured,
-  startWebLogin, submitWebLogin, webLoginState, whoAmI,
+  botConfigured, getChat, getChatMember, getMe, getUpdates, sendMessageWithToken,
+} from '../telegram/botApi.js';
+import {
+  accountInfo, cancelWebLogin, createStorageGroup, disconnect as disconnectAccount,
+  downloadMyAvatar, mtprotoConfigured, startWebLogin, submitWebLogin, updateTelegramProfile,
+  uploadTelegramPhoto, webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
-import { createProfile, deleteProfile, listProfiles, setActiveProfile } from '../profiles.js';
+import { createProfile, deleteProfile, listProfiles, readProfileEnv, setActiveProfile } from '../profiles.js';
+import {
+  avatarPath, isProfileLocked, markProfileLogin, readProfileStore, saveAvatar,
+  setProfileLock, verifyProfileSecret, writeProfileStore,
+} from '../profile-store.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 
@@ -96,6 +103,98 @@ async function startSend() {
     });
 }
 
+/* ── замок профиля ───────────────────────────────────────────────────────── */
+
+// Разблокированные профили: имя → когда истекает доступ
+const unlocked = new Map();
+// Одноразовые коды входа: имя → { code, expiresAt, attempts }
+const loginCodes = new Map();
+
+function autoLockMs(name) {
+  const minutes = Number(readProfileStore(name).lock.autoLockMinutes) || 30;
+  return Math.max(1, minutes) * 60_000;
+}
+
+export function profileUnlocked(name) {
+  if (!isProfileLocked(name)) return true;
+  const until = unlocked.get(name);
+  if (!until || until < Date.now()) {
+    unlocked.delete(name);
+    return false;
+  }
+  return true;
+}
+
+function touchUnlock(name) {
+  if (unlocked.has(name)) unlocked.set(name, Date.now() + autoLockMs(name));
+}
+
+function unlockProfile(name) {
+  unlocked.set(name, Date.now() + autoLockMs(name));
+  markProfileLogin(name);
+}
+
+/** Куда слать код входа: боту того профиля, в личку его владельцу. */
+async function sendLoginCode(name) {
+  const env = readProfileEnv(name);
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const admin = String(env.TELEGRAM_ADMIN_IDS ?? '').split(',').map((v) => v.trim()).filter(Boolean)[0];
+
+  if (!token || !admin) {
+    throw new Error(
+      'Для кода в Telegram профилю нужен бот и ваш id в списке владельцев. ' +
+        'Задайте их на шагах «Бот» и «Как отправлять», либо используйте PIN.',
+    );
+  }
+
+  const code = String(crypto.randomInt(100000, 999999));
+  loginCodes.set(name, { code, expiresAt: Date.now() + 5 * 60_000, attempts: 0 });
+
+  await sendMessageWithToken({
+    token,
+    apiRoot: env.TELEGRAM_BOT_API_ROOT,
+    chatId: admin,
+    text: `Код для входа в профиль «${name}»: ${code}\nДействует 5 минут. Если это не вы — просто не вводите его.`,
+  });
+
+  return { sentTo: `id ${admin}`, expiresInSec: 300 };
+}
+
+function verifyLoginCode(name, code) {
+  const entry = loginCodes.get(name);
+  if (!entry) throw new Error('Код не запрашивался или уже использован');
+  if (entry.expiresAt < Date.now()) {
+    loginCodes.delete(name);
+    throw new Error('Код устарел, запросите новый');
+  }
+  entry.attempts += 1;
+  if (entry.attempts > 5) {
+    loginCodes.delete(name);
+    throw new Error('Слишком много попыток, запросите новый код');
+  }
+  if (String(code).trim() !== entry.code) return false;
+  loginCodes.delete(name);
+  return true;
+}
+
+/** Профили для боковой колонки: с аватаром, именем и временем последнего входа. */
+function profileCards() {
+  return listProfiles().map((p) => {
+    const store = readProfileStore(p.name);
+    return {
+      ...p,
+      displayName: store.displayName || store.telegram?.name || '',
+      hasAvatar: Boolean(avatarPath(p.name)),
+      accent: store.accent,
+      lock: store.lock.type,
+      locked: isProfileLocked(p.name) && !profileUnlocked(p.name),
+      lastLoginAt: store.lastLoginAt,
+      username: store.telegram?.username ?? null,
+      premium: Boolean(store.telegram?.premium),
+    };
+  });
+}
+
 /* ── состояние для страницы ──────────────────────────────────────────────── */
 
 const mask = (value, tail = 4) =>
@@ -107,7 +206,9 @@ async function buildState() {
     envExists: envExists(),
     platform: os.platform(),
     profile: config.profile,
-    profiles: listProfiles().map(({ name, active, configured, dbSize }) => ({ name, active, configured, dbSize })),
+    profiles: profileCards(),
+    locked: !profileUnlocked(config.profile),
+    style: (({ displayName, accent, theme }) => ({ displayName, accent, theme }))(readProfileStore()),
     settings: {
       botToken: mask(config.botToken, 6),
       botTokenSet: Boolean(config.botToken),
@@ -363,13 +464,130 @@ const routes = {
 
   'POST /api/profiles/switch': async (body) => {
     if (job.mode || isRunning()) throw new Error('Сейчас идёт отправка — переключите профиль после неё');
+
+    const name = body?.name ?? 'default';
+    // Чужой профиль под замком не открываем, пока не подтвердят, что это свой
+    if (isProfileLocked(name) && !profileUnlocked(name)) {
+      const { lock } = readProfileStore(name);
+      const env = readProfileEnv(name);
+      const canCode = Boolean(env.TELEGRAM_BOT_TOKEN && String(env.TELEGRAM_ADMIN_IDS ?? '').trim());
+      return { needsUnlock: true, name, method: lock.type, canCode };
+    }
+
     // У другого профиля свой аккаунт и своя база: старые подключения закрываем.
     await cancelWebLogin();
     await disconnectAccount();
     closeDb();
-    setActiveProfile(body?.name ?? 'default');
+    setActiveProfile(name);
     reloadConfig();
     return buildState();
+  },
+
+  'POST /api/profiles/unlock': async (body) => {
+    const name = body?.name ?? config.profile;
+    const { lock } = readProfileStore(name);
+
+    let ok = false;
+    if (body?.code) ok = verifyLoginCode(name, body.code);
+    else if (lock.type === 'pin' || lock.type === 'password') ok = verifyProfileSecret(body?.secret, name);
+
+    if (!ok) throw new Error(lock.type === 'pin' ? 'Неверный PIN' : 'Не подошло');
+
+    unlockProfile(name);
+    if (name !== config.profile) {
+      await cancelWebLogin();
+      await disconnectAccount();
+      closeDb();
+      setActiveProfile(name);
+      reloadConfig();
+    }
+    return buildState();
+  },
+
+  'POST /api/profiles/request-code': async (body) => sendLoginCode(body?.name ?? config.profile),
+
+  'POST /api/profiles/lock-now': async () => {
+    unlocked.delete(config.profile);
+    return { locked: isProfileLocked(config.profile) };
+  },
+
+  /* ── личные настройки профиля ─────────────────────────────────────────── */
+
+  'GET /api/profile': async () => {
+    const store = readProfileStore();
+    return {
+      name: config.profile,
+      displayName: store.displayName,
+      accent: store.accent,
+      theme: store.theme,
+      hasAvatar: Boolean(avatarPath()),
+      telegram: store.telegram,
+      lock: { type: store.lock.type, autoLockMinutes: store.lock.autoLockMinutes },
+      lastLoginAt: store.lastLoginAt,
+      canUseTelegramCode: Boolean(config.botToken && config.adminIds.length),
+    };
+  },
+
+  'POST /api/profile': async (body) => {
+    const patch = {};
+    if (typeof body?.displayName === 'string') patch.displayName = body.displayName.slice(0, 60);
+    if (/^#[0-9a-f]{6}$/i.test(body?.accent ?? '')) patch.accent = body.accent.toLowerCase();
+    if (['auto', 'light', 'dark'].includes(body?.theme)) patch.theme = body.theme;
+    writeProfileStore(patch);
+    return routes['GET /api/profile']();
+  },
+
+  /** Тянет имя, username и аватар из Telegram — и запоминает их для профиля. */
+  'POST /api/profile/refresh-telegram': async () => {
+    if (!mtprotoConfigured()) throw new Error('Сначала подключите аккаунт на шаге 3');
+
+    const info = await accountInfo();
+    const avatar = await downloadMyAvatar().catch(() => null);
+    if (avatar) saveAvatar(avatar);
+
+    writeProfileStore({ telegram: { ...info, updatedAt: Date.now() } });
+    return routes['GET /api/profile']();
+  },
+
+  /** Своя картинка вместо аватара; по желанию — сразу и в самом Telegram. */
+  'POST /api/profile/avatar': async (body) => {
+    const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/i.exec(String(body?.dataUrl ?? ''));
+    if (!match) throw new Error('Нужна картинка PNG, JPEG или WebP');
+
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 8 * 1024 * 1024) throw new Error('Картинка больше 8 МБ');
+    const ext = match[1].toLowerCase().startsWith('jp') ? '.jpg' : `.${match[1].toLowerCase()}`;
+    saveAvatar(buffer, ext);
+
+    if (body?.alsoTelegram) {
+      if (!mtprotoConfigured()) throw new Error('Картинка сохранена, но в Telegram её не поставить: аккаунт не подключён');
+      const file = avatarPath();
+      await uploadTelegramPhoto(file, path.basename(file), buffer.length);
+    }
+    return { ok: true, alsoTelegram: Boolean(body?.alsoTelegram) };
+  },
+
+  /** Меняет имя в самом Telegram — его увидят все ваши собеседники. */
+  'POST /api/profile/telegram-name': async (body) => {
+    if (!mtprotoConfigured()) throw new Error('Аккаунт не подключён');
+    const info = await updateTelegramProfile({
+      firstName: String(body?.firstName ?? '').slice(0, 64),
+      lastName: String(body?.lastName ?? '').slice(0, 64),
+    });
+    writeProfileStore({ telegram: { ...info, updatedAt: Date.now() } });
+    return info;
+  },
+
+  'POST /api/profile/lock': async (body) => {
+    const type = body?.type ?? 'none';
+    // Меняем защиту только у того, кто уже внутри профиля
+    setProfileLock(type, body?.secret);
+    if (typeof body?.autoLockMinutes === 'number') {
+      const store = readProfileStore();
+      writeProfileStore({ lock: { ...store.lock, autoLockMinutes: Math.max(1, Math.min(720, body.autoLockMinutes)) } });
+    }
+    if (type !== 'none') unlockProfile(config.profile);
+    return routes['GET /api/profile']();
   },
 
   'POST /api/profiles/delete': async (body) => {
@@ -459,6 +677,22 @@ const routes = {
 
 /* ── сервер ──────────────────────────────────────────────────────────────── */
 
+/** Аватар профиля отдаём как обычную картинку. */
+async function serveAvatar(req, res, url) {
+  const name = url.searchParams.get('name') || config.profile;
+  const file = avatarPath(name);
+  if (!file) {
+    res.writeHead(404).end();
+    return;
+  }
+  const data = await fs.readFile(file);
+  res.writeHead(200, {
+    'content-type': path.extname(file) === '.png' ? 'image/png' : 'image/jpeg',
+    'cache-control': 'no-cache',
+  });
+  res.end(data);
+}
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
@@ -513,8 +747,25 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/avatar') {
+      await serveAvatar(req, res, url);
+      return;
+    }
+
     const key = `${req.method} ${url.pathname}`;
     const handler = routes[key];
+
+    // Пока профиль под замком, наружу отдаём только то, что нужно для входа
+    const ALLOWED_WHEN_LOCKED = new Set([
+      'GET /api/state', 'GET /api/profiles', 'POST /api/profiles/switch',
+      'POST /api/profiles/unlock', 'POST /api/profiles/request-code',
+    ]);
+    if (handler && !profileUnlocked(config.profile) && !ALLOWED_WHEN_LOCKED.has(key)) {
+      res.writeHead(423, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'Профиль закрыт — введите PIN или код из Telegram', locked: true }));
+      return;
+    }
+    touchUnlock(config.profile);
 
     if (!handler) {
       if (req.method === 'GET') return serveStatic(req, res);

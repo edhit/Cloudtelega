@@ -117,6 +117,18 @@ export const BOT_UPLOAD_LIMIT = 50 * 1024 * 1024;
 export const MTPROTO_UPLOAD_LIMIT = 2000 * 1024 * 1024;
 // Telegram принимает как «фото» (с превью в ленте) файлы не больше 10 МБ.
 export const PHOTO_LIMIT = 10 * 1024 * 1024;
+// С Telegram Premium лимит вдвое больше.
+export const MTPROTO_PREMIUM_LIMIT = 4000 * 1024 * 1024;
+
+/** Лимит на файл для аккаунта: у Premium он вдвое больше. */
+export async function mtprotoLimit() {
+  try {
+    const { readProfileStore } = await import('./profile-store.js');
+    return readProfileStore().telegram?.premium ? MTPROTO_PREMIUM_LIMIT : MTPROTO_UPLOAD_LIMIT;
+  } catch {
+    return MTPROTO_UPLOAD_LIMIT;
+  }
+}
 
 /** Эффективный режим HEIC с учётом heicMode=auto. */
 export function heicMode() {

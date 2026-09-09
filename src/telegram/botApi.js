@@ -236,6 +236,22 @@ export async function getUpdates(offset, timeoutSec = 30) {
   return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message'] }, { retries: 2 });
 }
 
+/**
+ * Отправка сообщения токеном конкретного профиля — минуя текущие настройки.
+ * Так код входа уходит через бота того профиля, в который вы входите.
+ */
+export async function sendMessageWithToken({ token, apiRoot, chatId, text }) {
+  const root = (apiRoot || 'https://api.telegram.org').replace(/\/+$/, '');
+  const res = await fetch(`${root}/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, disable_notification: false }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!body.ok) throw new Error(body.description ?? `Telegram ответил ${res.status}`);
+  return body.result;
+}
+
 export async function setMyCommands(commands) {
   return call('setMyCommands', { commands });
 }

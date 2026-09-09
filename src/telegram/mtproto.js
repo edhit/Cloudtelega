@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { createRequire } from 'node:module';
-import { config, reloadConfig, MTPROTO_UPLOAD_LIMIT } from '../config.js';
+import { config, reloadConfig, mtprotoLimit } from '../config.js';
 import { updateEnv } from '../env.js';
 import { log, humanSize, progressBar } from '../logger.js';
 
@@ -134,8 +134,9 @@ export async function resolvePeer() {
  * @returns {Promise<{messageId:number, method:'mtproto'}>}
  */
 export async function sendFileViaAccount({ filePath, fileName, size, caption, parseMode, asDocument, topicId }) {
-  if (size > MTPROTO_UPLOAD_LIMIT) {
-    const err = new Error(`Файл больше ${humanSize(MTPROTO_UPLOAD_LIMIT)} — Telegram не примет`);
+  const limit = await mtprotoLimit();
+  if (size > limit) {
+    const err = new Error(`Файл больше ${humanSize(limit)} — Telegram не примет`);
     err.code = 'TOO_LARGE';
     throw err;
   }
@@ -349,4 +350,57 @@ export async function cancelWebLogin() {
   if (!webLogin) return;
   await webLogin.client?.disconnect().catch(() => {});
   webLogin = null;
+}
+
+/* ── аккаунт: аватар, имя, Premium ───────────────────────────────────────── */
+
+/** Кто вошёл: имя, username, телефон и есть ли Premium (от него зависит лимит файла). */
+export async function accountInfo() {
+  const me = await whoAmI();
+  return {
+    id: String(me.id),
+    firstName: me.firstName ?? '',
+    lastName: me.lastName ?? '',
+    name: [me.firstName, me.lastName].filter(Boolean).join(' '),
+    username: me.username ?? null,
+    phone: me.phone ? `+${me.phone}` : null,
+    premium: Boolean(me.premium),
+  };
+}
+
+/** Скачивает аватар аккаунта, чтобы показывать его в программе. */
+export async function downloadMyAvatar() {
+  const c = await getClient();
+  const buffer = await c.downloadProfilePhoto('me', { isBig: true });
+  return buffer && buffer.length ? Buffer.from(buffer) : null;
+}
+
+/** Меняет имя в самом Telegram — это видно всем вашим собеседникам. */
+export async function updateTelegramProfile({ firstName, lastName, about }) {
+  const { Api } = loadGramJs();
+  const c = await getClient();
+  await c.invoke(
+    new Api.account.UpdateProfile({
+      firstName: firstName ?? undefined,
+      lastName: lastName ?? undefined,
+      about: about ?? undefined,
+    }),
+  );
+  return accountInfo();
+}
+
+/** Ставит новое фото профиля в самом Telegram. */
+export async function uploadTelegramPhoto(filePath, fileName, size) {
+  const { Api, CustomFile } = loadGramJs();
+  const c = await getClient();
+  const file = await c.uploadFile({ file: new CustomFile(fileName, size, filePath), workers: 1 });
+  await c.invoke(new Api.photos.UploadProfilePhoto({ file }));
+  return true;
+}
+
+/** Отправляет сообщение самому себе («Избранное») — так приходит код входа. */
+export async function messageSelf(text) {
+  const c = await getClient();
+  await c.sendMessage('me', { message: text });
+  return true;
 }
