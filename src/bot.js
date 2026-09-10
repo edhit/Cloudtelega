@@ -12,6 +12,8 @@ import { detectPhones, inspectMount, listMountPoints } from './devices.js';
 import { collect, isRunning, requestStop, runSend, sendState } from './pipeline.js';
 import { messageLink } from './links.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
+import { accessOverview, createAccessLink, expireGuests, noteJoin, removeGuest, timeLeft } from './sharing.js';
+import { driveOverview } from './drive.js';
 import {
   copyMessage, editMessageText, getUpdates, sendByFileId, sendLivePhotoByFileId,
   sendMessage, setMyCommands,
@@ -31,6 +33,10 @@ const COMMANDS = [
   { command: 'topics', description: 'топики-годы' },
   { command: 'retry', description: 'повторить упавшие' },
   { command: 'cleanup', description: 'убрать лишние видео Live Photo' },
+  { command: 'share', description: 'ссылка на диск: /share день|неделя|месяц' },
+  { command: 'guests', description: 'кому открыт доступ к диску' },
+  { command: 'kick', description: 'закрыть доступ гостю: /kick <id>' },
+  { command: 'drive', description: 'что лежит на диске' },
   { command: 'id', description: 'узнать свой id' },
   { command: 'help', description: 'список команд' },
 ];
@@ -51,6 +57,12 @@ const HELP = [
   '/topics — топики-годы и их id',
   '/retry — вернуть упавшие файлы в очередь',
   '/cleanup — найти лишние видео Live Photo (/cleanup yes — удалить их сообщения)',
+  '',
+  'Диск и доступ:',
+  '/drive — сколько файлов на диске и куда он сложен',
+  '/share [день|неделя|месяц|год|навсегда] — ссылка-приглашение на диск',
+  '/guests — кто внутри и сколько ему осталось',
+  '/kick <id> — закрыть доступ (человек не банится, сможет войти снова)',
 ].join('\n');
 
 /* ── доступ и пути ───────────────────────────────────────────────────────── */
@@ -300,6 +312,66 @@ async function cmdTopics(chatId) {
   return sendMessage(chatId, rows.map((t) => `${t.title} → ${t.topic_id}`).join('\n'));
 }
 
+/* ── диск и доступ ───────────────────────────────────────────────────────── */
+
+const SHARE_WORDS = {
+  день: 'day', сутки: 'day', day: 'day',
+  неделя: 'week', неделю: 'week', week: 'week',
+  месяц: 'month', month: 'month',
+  год: 'year', year: 'year',
+  навсегда: 'forever', forever: 'forever',
+};
+
+async function cmdDrive(chatId) {
+  const d = driveOverview();
+  if (!d.chatId) return sendMessage(chatId, 'Диск ещё не настроен — выберите для него чат в мастере.');
+  return sendMessage(
+    chatId,
+    [
+      `📁 На диске: ${d.files} ${plural(d.files, 'файл', 'файла', 'файлов')}, ${humanSize(d.bytes)}`,
+      d.separateChat ? 'Хранится в отдельном чате — архив снимков гостям не виден' : 'Лежит в том же чате, что и снимки',
+      d.folders ? 'Папки раскладываются по темам' : 'Всё одной лентой',
+    ].join('\n'),
+  );
+}
+
+async function cmdShare(chatId, arg) {
+  const word = (arg || '').trim().toLowerCase();
+  const preset = SHARE_WORDS[word] ?? 'week';
+  const invite = await createAccessLink({ accessPreset: preset, memberLimit: 1 });
+  return sendMessage(
+    chatId,
+    [
+      `🔗 Ссылка на диск (${invite.name}):`,
+      invite.link,
+      '',
+      'Одноразовая: войти по ней сможет один человек.',
+      invite.access_ms
+        ? `Через ${timeLeft(Date.now() + invite.access_ms)} доступ закроется сам — гость будет убран, но не забанен.`
+        : 'Доступ бессрочный.',
+    ].join('\n'),
+  );
+}
+
+async function cmdGuests(chatId) {
+  const { guests, members } = await accessOverview();
+  if (!guests.length) return sendMessage(chatId, 'На диске пока нет гостей.');
+
+  const lines = guests.map((g) => {
+    const who = g.username ? `@${g.username}` : g.name;
+    return `• ${who} — ${g.expired ? 'срок истёк' : g.left} (id ${g.user_id})`;
+  });
+  if (members) lines.push('', `Всего участников в чате: ${members}`);
+  return sendMessage(chatId, ['👥 Доступ к диску:', ...lines].join('\n'));
+}
+
+async function cmdKick(chatId, arg) {
+  const id = (arg || '').match(/\d{5,}/)?.[0];
+  if (!id) return sendMessage(chatId, 'Кого убрать? Например: /kick 123456789 (id виден в /guests)');
+  await removeGuest(id);
+  return sendMessage(chatId, `Готово: ${id} убран с диска. Не забанен — сможет войти по новой ссылке.`);
+}
+
 /* ── разбор команд ───────────────────────────────────────────────────────── */
 
 async function handleCommand(msg) {
@@ -334,6 +406,10 @@ async function handleCommand(msg) {
     case '/last': return cmdLast(chatId, arg);
     case '/topics': return cmdTopics(chatId);
     case '/cleanup': return cmdCleanup(chatId, arg);
+    case '/drive': return cmdDrive(chatId);
+    case '/share': return cmdShare(chatId, arg);
+    case '/guests': return cmdGuests(chatId);
+    case '/kick': return cmdKick(chatId, arg);
     case '/retry': {
       const n = resetFailed();
       return sendMessage(chatId, n ? `Вернул в очередь: ${n}. Запустить: /send` : 'Упавших файлов нет');
@@ -385,6 +461,8 @@ const botStatus = { running: false, startedAt: 0, error: null, greeted: 0 };
 let poll = null;
 // Номер запуска: старый цикл, догорая после перезапуска, не должен гасить новый
 let generation = 0;
+// Как часто смотреть, у кого вышел срок доступа к диску
+const GUEST_SWEEP_MS = 5 * 60 * 1000;
 
 export function botState() {
   return { ...botStatus, chats: seen.chats.size, people: seen.people.size };
@@ -474,6 +552,14 @@ export async function runBot({ greet = true } = {}) {
   let offset = Number.parseInt(getMeta('bot_update_offset') ?? '0', 10) || 0;
   log.ok('Бот слушает команды. Ctrl+C — выход. Напишите ему /help');
 
+  // Просроченных гостей убираем сами: Telegram умеет только гасить ссылку,
+  // а выгонять того, кто уже вошёл, приходится нам.
+  const sweeper = setInterval(() => {
+    expireGuests().catch((err) => log.warn(`Проверка сроков доступа: ${describeError(err)}`));
+  }, GUEST_SWEEP_MS);
+  // Первый проход сразу: пока бот стоял, сроки могли выйти
+  expireGuests().catch(() => {});
+
   try {
     while (!stopped && generation === mine) {
       let updates;
@@ -494,6 +580,15 @@ export async function runBot({ greet = true } = {}) {
         setMeta('bot_update_offset', offset);
         remember(update);
 
+        // Кто-то вошёл или вышел из диска — запоминаем срок его доступа
+        if (update.chat_member || update.chat_join_request) {
+          try {
+            noteJoin(update);
+          } catch (err) {
+            log.warn(`Не удалось записать гостя: ${describeError(err)}`);
+          }
+        }
+
         const msg = update.message;
         if (!msg?.text?.startsWith('/')) continue;
         // Команды принимаем только в личке с ботом, не в самом хранилище
@@ -508,6 +603,7 @@ export async function runBot({ greet = true } = {}) {
       }
     }
   } finally {
+    clearInterval(sweeper);
     // Гасим только если нас не сменил новый запуск
     if (generation === mine) botStatus.running = false;
   }

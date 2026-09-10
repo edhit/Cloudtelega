@@ -15,6 +15,11 @@ import { log, humanSize, onLog } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { summarizeUnreadable } from '../scanner.js';
+import { driveOverview, getFileBack, putMany, removeFromDrive } from '../drive.js';
+import {
+  accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
+  removeGuest, revokeAccessLink,
+} from '../sharing.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
 import {
   botConfigured, fileUrl, getChat, getChatMember, getFilePath, getMe, getUpdates, sendMessageWithToken,
@@ -128,15 +133,18 @@ function mirrorLogToJob() {
   });
 }
 
-/** Начало любой операции: чистим прошлый лог и пишем, с чем работаем. */
-function beginJob(mode, firstLine) {
+/**
+ * Начало любой операции: чистим прошлый лог и пишем, с чем работаем.
+ * @param {string[]} [paths] что именно обходим — у диска свои пути, не SCAN_PATHS
+ */
+function beginJob(mode, firstLine, paths = config.scanPaths) {
   job.mode = mode;
   job.summary = null;
   job.problem = null;
   job.finished = null;
   job.lines = [];
   note(firstLine);
-  note(`Папок для обхода: ${config.scanPaths.length}${config.scanPaths.length ? ` — ${config.scanPaths.join(', ')}` : ''}`);
+  note(`Папок для обхода: ${paths.length}${paths.length ? ` — ${paths.join(', ')}` : ''}`);
   return mirrorLogToJob();
 }
 
@@ -252,6 +260,57 @@ async function startSend() {
       unmirror();
       job.mode = null;
       job.finished = 'send';
+    });
+}
+
+/** Страница диска: сводка плюс порция записей со ссылками на сообщения. */
+function drivePage({ query = '', status = '', offset = 0 } = {}) {
+  const page = searchFiles({
+    bucket: 'drive',
+    query: String(query ?? ''),
+    status: String(status ?? ''),
+    limit: 100,
+    offset: Number(offset) || 0,
+  });
+  return { ...driveOverview(), ...page, rows: withLinks(page.rows) };
+}
+
+/** Загрузка на диск — та же фоновая работа, что скан и отправка. */
+async function startDriveUpload(paths, folder) {
+  if (job.mode || isRunning()) throw new Error('Уже идёт другая операция');
+  if (!paths?.length) throw new Error('Не выбрано, что загружать');
+
+  const unmirror = beginJob('drive', 'Кладу на диск…', paths);
+  note(`Чат диска: ${driveOverview().chatId || 'не выбран'}`);
+
+  putMany({
+    paths,
+    folder,
+    hooks: {
+      onFile: ({ index, total, status, file, error, folder: where, link, method }) => {
+        const size = humanSize(file?.size ?? 0);
+        if (status === 'sent') {
+          note(`✓ ${index}/${total} ${file.name} (${size}${where ? `, папка ${where}` : ''}, ${method === 'mtproto' ? 'через аккаунт' : 'ботом'})`, 'ok');
+        } else if (status === 'duplicate') {
+          note(`⏭ ${index}/${total} ${file.name} — уже на диске`);
+        } else {
+          note(`✗ ${index}/${total} ${file.name} (${size}): ${error}`, 'error');
+        }
+      },
+      onFinish: (r) => {
+        job.summary = { count: r.sent, bytes: r.bytes, photos: r.sent, videos: 0, dropped: r.duplicates };
+        note(
+          `Готово: загружено ${r.sent} (${humanSize(r.bytes)}), уже было ${r.duplicates}, ошибок ${r.failed}`,
+          r.failed ? 'warn' : 'ok',
+        );
+      },
+    },
+  })
+    .catch(failJob)
+    .finally(() => {
+      unmirror();
+      job.mode = null;
+      job.finished = 'drive';
     });
 }
 
@@ -390,6 +449,9 @@ async function buildState() {
       }),
       chatTitle: readProfileStore().chatTitle ?? '',
       sendDelayMs: config.sendDelayMs,
+      driveChatId: config.driveChatId,
+      driveFolders: config.driveFolders,
+      driveDownloadDir: config.driveDownloadDir,
     },
     checks: { bot: null, chat: null, account: null },
     job: { ...job, running: Boolean(job.mode), send: sendState() },
@@ -647,6 +709,7 @@ const routes = {
       'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'SCAN_PATHS', 'SEND_AS_DOCUMENT',
       'HEIC_MODE', 'KEEP_HEIC_ORIGINAL', 'LIVE_PHOTO_VIDEOS', 'PAIR_PREFER',
       'CAPTION_STYLE', 'TELEGRAM_ADMIN_IDS', 'SEND_DELAY_MS', 'HEIC_JPEG_QUALITY',
+      'DRIVE_CHAT_ID', 'DRIVE_FOLDERS', 'DRIVE_DOWNLOAD_DIR',
     ];
     const patch = {};
     for (const [k, v] of Object.entries(body ?? {})) {
@@ -669,6 +732,60 @@ const routes = {
   'POST /api/bot/stop': async () => {
     stopBot();
     return botState();
+  },
+
+  /* ── диск ───────────────────────────────────────────────────────────── */
+
+  'GET /api/drive': async () => drivePage({}),
+
+  'POST /api/drive/search': async (body) => drivePage(body ?? {}),
+
+  'POST /api/drive/upload': async (body) => {
+    const paths = (body?.paths ?? []).map(String).filter(Boolean);
+    await startDriveUpload(paths, body?.folder ? String(body.folder).slice(0, 60) : null);
+    return { started: true };
+  },
+
+  'POST /api/drive/download': async (body) => {
+    const result = await getFileBack(Number(body?.id), { destDir: body?.destDir || undefined });
+    return result;
+  },
+
+  'POST /api/drive/remove': async (body) => removeFromDrive(Number(body?.id)),
+
+  /* ── доступ к диску ─────────────────────────────────────────────────── */
+
+  'GET /api/access': async () => accessOverview(),
+
+  'POST /api/access/link': async (body) => {
+    const invite = await createAccessLink({
+      name: body?.name ? String(body.name).slice(0, 32) : undefined,
+      accessPreset: body?.preset ?? 'week',
+      linkHours: body?.linkHours === null ? null : Number(body?.linkHours) || 48,
+      memberLimit: body?.memberLimit === null ? null : Number(body?.memberLimit) || 1,
+      joinRequest: Boolean(body?.joinRequest),
+    });
+    return { invite, ...(await accessOverview()) };
+  },
+
+  'POST /api/access/revoke': async (body) => {
+    await revokeAccessLink(String(body?.link ?? ''));
+    return accessOverview();
+  },
+
+  'POST /api/access/kick': async (body) => {
+    await removeGuest(String(body?.userId ?? ''));
+    return accessOverview();
+  },
+
+  'POST /api/access/extend': async (body) => {
+    extendGuest(String(body?.userId ?? ''), body?.preset === 'forever' ? null : presetHours(body?.preset ?? 'week'));
+    return accessOverview();
+  },
+
+  'POST /api/access/sweep': async () => {
+    const r = await expireGuests();
+    return { ...r, ...(await accessOverview()) };
   },
 
   'POST /api/checks': async () => runChecks(),

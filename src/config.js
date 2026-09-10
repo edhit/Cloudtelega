@@ -11,6 +11,7 @@ const BOOT_ENV = { ...process.env };
 // иначе значения прошлого профиля протекут в новый.
 const MANAGED_KEYS = [
   'TELEGRAM_CHAT_ID', 'TELEGRAM_TOPIC_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_API_ROOT',
+  'DRIVE_CHAT_ID', 'DRIVE_FOLDERS', 'DRIVE_DOWNLOAD_DIR',
   'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'TELEGRAM_SESSION', 'TELEGRAM_ADMIN_IDS',
   'SCAN_PATHS', 'DB_PATH', 'TMP_DIR', 'TOPIC_MODE', 'HEIC_MODE', 'HEIC_JPEG_QUALITY',
   'KEEP_HEIC_ORIGINAL', 'SEND_AS_DOCUMENT', 'PAIR_PREFER', 'LIVE_PHOTO_VIDEOS',
@@ -50,6 +51,14 @@ function build() {
   return {
     chatId: process.env.TELEGRAM_CHAT_ID?.trim() || '',
     topicId: int(process.env.TELEGRAM_TOPIC_ID, null),
+
+    // Диск — отдельный чат для файлов. Отдельный, потому что к диску дают
+    // доступ посторонним, а личный архив снимков показывать им незачем.
+    driveChatId: process.env.DRIVE_CHAT_ID?.trim() || '',
+    // Раскладывать ли файлы по темам-папкам (нужна супергруппа с темами)
+    driveFolders: bool(process.env.DRIVE_FOLDERS, true),
+    // Куда складывать скачанное с диска
+    driveDownloadDir: process.env.DRIVE_DOWNLOAD_DIR?.trim() || '',
 
     botToken: process.env.TELEGRAM_BOT_TOKEN?.trim() || '',
     botApiRoot: (process.env.TELEGRAM_BOT_API_ROOT || 'https://api.telegram.org').replace(/\/+$/, ''),

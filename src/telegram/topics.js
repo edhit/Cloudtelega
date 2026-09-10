@@ -5,51 +5,63 @@ import { getTopic, putTopic } from '../db.js';
 import { botConfigured, createForumTopicViaBot } from './botApi.js';
 import { createForumTopicViaAccount, listForumTopics, mtprotoConfigured } from './mtproto.js';
 
-let remoteTopicsCache = null;
+// Список существующих топиков читается через аккаунт и только для того чата,
+// с которым сейчас работаем: у архива и у диска чаты могут быть разные.
+const remoteTopicsCache = new Map();
 
 /** Топики, которые уже существуют в чате (доступно только через аккаунт). */
-async function loadRemoteTopics() {
-  if (remoteTopicsCache) return remoteTopicsCache;
+async function loadRemoteTopics(chatId) {
+  if (remoteTopicsCache.has(chatId)) return remoteTopicsCache.get(chatId);
   if (!mtprotoConfigured()) return null;
   try {
-    remoteTopicsCache = await listForumTopics();
+    const topics = await listForumTopics(100, chatId);
+    remoteTopicsCache.set(chatId, topics);
+    return topics;
   } catch (err) {
     log.warn(`Не удалось получить список топиков: ${describeError(err, { kind: 'bot' })}`);
-    remoteTopicsCache = null;
+    remoteTopicsCache.set(chatId, null);
+    return null;
   }
-  return remoteTopicsCache;
 }
 
 /**
- * Возвращает message_thread_id для года: из базы, из существующих топиков чата
- * или создаёт новый. Работает только в супергруппе с включёнными темами (форумом).
+ * message_thread_id по названию темы: из базы, из существующих тем чата
+ * или создаём новую. Работает только в супергруппе с включёнными темами.
+ * @param {string} title название темы — год для архива, имя папки для диска
+ * @param {string} chatId в каком чате
  */
-export async function resolveYearTopic(year) {
-  const cached = getTopic(config.chatId, year);
+export async function resolveTopic(title, chatId = config.chatId) {
+  if (!chatId) throw new Error('Не задан чат для темы');
+  const key = String(title).trim();
+
+  const cached = getTopic(chatId, key);
   if (cached) return cached;
 
-  const remote = await loadRemoteTopics();
-  const found = remote?.find((t) => t.title.trim() === year);
+  const remote = await loadRemoteTopics(chatId);
+  const found = remote?.find((t) => t.title.trim() === key);
   if (found) {
-    putTopic(config.chatId, year, found.id, found.title);
-    log.info(`Топик «${year}» уже существует (id ${found.id})`);
+    putTopic(chatId, key, found.id, found.title);
+    log.info(`Тема «${key}» уже существует (id ${found.id})`);
     return found.id;
   }
 
   let topicId;
   if (botConfigured()) {
-    topicId = await createForumTopicViaBot(year);
+    topicId = await createForumTopicViaBot(key, chatId);
   } else if (mtprotoConfigured()) {
-    topicId = await createForumTopicViaAccount(year);
+    topicId = await createForumTopicViaAccount(key, chatId);
   } else {
-    throw new Error('Нет ни бота, ни аккаунта — некому создать топик');
+    throw new Error('Нет ни бота, ни аккаунта — некому создать тему');
   }
 
-  putTopic(config.chatId, year, topicId, year);
-  if (remoteTopicsCache) remoteTopicsCache.push({ id: topicId, title: year });
-  log.ok(`Создан топик «${year}» (id ${topicId})`);
+  putTopic(chatId, key, topicId, key);
+  remoteTopicsCache.get(chatId)?.push({ id: topicId, title: key });
+  log.ok(`Создана тема «${key}» (id ${topicId})`);
   return topicId;
 }
+
+/** Топик-год в архиве снимков. */
+export const resolveYearTopic = (year) => resolveTopic(year, config.chatId);
 
 /** Топик для конкретного файла в зависимости от TOPIC_MODE. */
 export async function topicForFile(file) {

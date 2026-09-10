@@ -172,7 +172,7 @@ export async function getChat(chatId = config.chatId) {
  * а для «фото с превью» — 10 МБ.
  * @returns {Promise<{messageId:number, method:'bot'}>}
  */
-export async function sendFileViaBot({ filePath, fileName, size, mime, caption, parseMode, kind, asDocument, topicId }) {
+export async function sendFileViaBot({ filePath, fileName, size, mime, caption, parseMode, kind, asDocument, topicId, chatId = config.chatId }) {
   if (config.botApiRoot === 'https://api.telegram.org' && size > BOT_UPLOAD_LIMIT) {
     const err = new Error('Файл больше 50 МБ — Bot API не примет');
     err.code = 'TOO_LARGE';
@@ -184,7 +184,7 @@ export async function sendFileViaBot({ filePath, fileName, size, mime, caption, 
   const field = useDocument ? 'document' : kind === 'video' ? 'video' : 'photo';
 
   const form = new FormData();
-  form.append('chat_id', String(config.chatId));
+  form.append('chat_id', String(chatId));
   if (topicId) form.append('message_thread_id', String(topicId));
   if (caption) form.append('caption', caption.slice(0, 1024));
   if (caption && parseMode) form.append('parse_mode', parseMode);
@@ -224,8 +224,8 @@ export async function sendLivePhotoViaBot({ filePath, fileName, mime, videoPath,
  * «Управление темами» (can_manage_topics).
  * @returns {Promise<number>} message_thread_id
  */
-export async function createForumTopicViaBot(title) {
-  const result = await call('createForumTopic', { chat_id: config.chatId, name: title });
+export async function createForumTopicViaBot(title, chatId = config.chatId) {
+  const result = await call('createForumTopic', { chat_id: chatId, name: title });
   return result.message_thread_id;
 }
 
@@ -302,7 +302,12 @@ export async function copyMessage(toChatId, fromChatId, messageId, extra = {}) {
 
 // Кроме личных сообщений нас интересует, куда бота добавили: по этим апдейтам
 // мастер находит группы и каналы, не спрашивая у пользователя числовой id.
-const WATCHED_UPDATES = ['message', 'edited_message', 'channel_post', 'my_chat_member'];
+const WATCHED_UPDATES = [
+  'message', 'edited_message', 'channel_post', 'my_chat_member',
+  // chat_member показывает, кто вошёл и по какой ссылке; без него не понять,
+  // кому и когда закрывать доступ. Telegram шлёт его только если явно попросить.
+  'chat_member', 'chat_join_request',
+];
 
 export async function getUpdates(offset, timeoutSec = 30, { allowedUpdates = WATCHED_UPDATES, signal } = {}) {
   return call(
@@ -326,6 +331,65 @@ export async function sendMessageWithToken({ token, apiRoot, chatId, text }) {
   const body = await res.json().catch(() => ({}));
   if (!body.ok) throw new Error(body.description ?? `Telegram ответил ${res.status}`);
   return body.result;
+}
+
+/* ── доступ к чату: ссылки-приглашения и участники ───────────────────────── */
+
+/**
+ * Ссылка-приглашение с сроком жизни. Такую ссылку Telegram сам перестаёт
+ * принимать после expireDate, а memberLimit ограничивает число входов.
+ * @param {{chatId?:string, name?:string, expireDate?:number, memberLimit?:number, joinRequest?:boolean}} opts
+ */
+export async function createChatInviteLink({ chatId = config.chatId, name, expireDate, memberLimit, joinRequest } = {}) {
+  const payload = { chat_id: chatId };
+  if (name) payload.name = name.slice(0, 32);
+  if (expireDate) payload.expire_date = Math.floor(expireDate / 1000);
+  // Telegram не разрешает одновременно лимит и заявки на вступление
+  if (joinRequest) payload.creates_join_request = true;
+  else if (memberLimit) payload.member_limit = memberLimit;
+  return call('createChatInviteLink', payload);
+}
+
+export async function revokeChatInviteLink(inviteLink, chatId = config.chatId) {
+  return call('revokeChatInviteLink', { chat_id: chatId, invite_link: inviteLink });
+}
+
+export async function getChatMemberCount(chatId = config.chatId) {
+  return call('getChatMemberCount', { chat_id: chatId });
+}
+
+export async function banChatMember(userId, { chatId = config.chatId, untilDate, revokeMessages = false } = {}) {
+  const payload = { chat_id: chatId, user_id: Number(userId), revoke_messages: revokeMessages };
+  if (untilDate) payload.until_date = Math.floor(untilDate / 1000);
+  return call('banChatMember', payload);
+}
+
+export async function unbanChatMember(userId, { chatId = config.chatId, onlyIfBanned = true } = {}) {
+  return call('unbanChatMember', { chat_id: chatId, user_id: Number(userId), only_if_banned: onlyIfBanned });
+}
+
+/**
+ * Выгнать, но не забанить. В Bot API отдельной команды «kick» нет: сначала
+ * бан (он и выкидывает из чата), сразу за ним разбан — и человек снова может
+ * войти по новой ссылке. Без разбана он остался бы в чёрном списке навсегда.
+ */
+export async function kickWithoutBan(userId, { chatId = config.chatId } = {}) {
+  await banChatMember(userId, { chatId });
+  await unbanChatMember(userId, { chatId, onlyIfBanned: true });
+  return true;
+}
+
+export async function approveChatJoinRequest(userId, chatId = config.chatId) {
+  return call('approveChatJoinRequest', { chat_id: chatId, user_id: Number(userId) });
+}
+
+export async function declineChatJoinRequest(userId, chatId = config.chatId) {
+  return call('declineChatJoinRequest', { chat_id: chatId, user_id: Number(userId) });
+}
+
+/** Права обычных участников чата: для «диска» их обычно урезают до чтения. */
+export async function setChatPermissions(permissions, chatId = config.chatId) {
+  return call('setChatPermissions', { chat_id: chatId, permissions });
 }
 
 export async function setMyCommands(commands) {

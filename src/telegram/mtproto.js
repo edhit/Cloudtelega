@@ -13,7 +13,7 @@ import { describeError } from '../errors.js';
 const require = createRequire(import.meta.url);
 
 let client = null;
-let peerCache = null;
+const peerCache = new Map();
 
 function loadGramJs() {
   const { TelegramClient, Api } = require('teleproto');
@@ -60,7 +60,7 @@ export async function disconnect() {
     await client.disconnect().catch(() => {});
     await client.destroy?.().catch(() => {});
     client = null;
-    peerCache = null;
+    peerCache.clear();
   }
 }
 
@@ -103,16 +103,22 @@ function saveSessionToEnv(sessionString) {
   log.ok(`Сессия сохранена в ${file}`);
 }
 
-/** Находит канал/группу по id (-100...) или @username. */
-export async function resolvePeer() {
-  if (peerCache) return peerCache;
+/**
+ * Находит канал/группу по id (-100...) или @username.
+ * Кэш по чату: у архива снимков и у диска чаты разные.
+ */
+export async function resolvePeer(chatId = config.chatId) {
+  const raw = String(chatId).trim();
+  if (!raw) throw new Error('Не задан чат');
+  if (peerCache.has(raw)) return peerCache.get(raw);
+
   const c = await getClient();
-  const raw = String(config.chatId).trim();
 
   try {
     const value = raw.startsWith('@') || Number.isNaN(Number(raw)) ? raw : Number(raw);
-    peerCache = await c.getInputEntity(value);
-    return peerCache;
+    const peer = await c.getInputEntity(value);
+    peerCache.set(raw, peer);
+    return peer;
   } catch {
     /* пробуем через список диалогов ниже */
   }
@@ -123,8 +129,9 @@ export async function resolvePeer() {
     const id = d.id?.toString();
     const username = d.entity?.username?.toLowerCase();
     if (id === raw || id === raw.replace(/^-100/, '') || `-100${id}` === raw || username === wanted) {
-      peerCache = await c.getInputEntity(d.entity);
-      return peerCache;
+      const peer = await c.getInputEntity(d.entity);
+      peerCache.set(raw, peer);
+      return peer;
     }
   }
   throw new Error(`Не найден чат ${raw}. Аккаунт должен состоять в этом канале/группе.`);
@@ -134,7 +141,7 @@ export async function resolvePeer() {
  * Отправляет файл от имени аккаунта. Лимит — 2 ГБ (4 ГБ с Premium).
  * @returns {Promise<{messageId:number, method:'mtproto'}>}
  */
-export async function sendFileViaAccount({ filePath, fileName, size, caption, parseMode, asDocument, topicId }) {
+export async function sendFileViaAccount({ filePath, fileName, size, caption, parseMode, asDocument, topicId, chatId = config.chatId }) {
   const limit = await mtprotoLimit();
   if (size > limit) {
     const err = new Error(`Файл больше ${humanSize(limit)} — Telegram не примет`);
@@ -144,7 +151,7 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, pa
 
   const { CustomFile } = loadGramJs();
   const c = await getClient();
-  const peer = await resolvePeer();
+  const peer = await resolvePeer(chatId);
 
   let lastPrint = 0;
   const msg = await c.sendFile(peer, {
@@ -169,10 +176,10 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, pa
 }
 
 /** Список существующих топиков форум-супергруппы: [{ id, title }]. */
-export async function listForumTopics(limit = 100) {
+export async function listForumTopics(limit = 100, chatId = config.chatId) {
   const { Api } = loadGramJs();
   const c = await getClient();
-  const peer = await resolvePeer();
+  const peer = await resolvePeer(chatId);
   const res = await c.invoke(
     new Api.messages.GetForumTopics({ peer, offsetDate: 0, offsetId: 0, offsetTopic: 0, limit }),
   );
@@ -182,10 +189,10 @@ export async function listForumTopics(limit = 100) {
 }
 
 /** Создаёт топик от имени аккаунта (аккаунт должен быть админом с правом на темы). */
-export async function createForumTopicViaAccount(title) {
+export async function createForumTopicViaAccount(title, chatId = config.chatId) {
   const { Api, generateRandomLong } = loadGramJs();
   const c = await getClient();
-  const peer = await resolvePeer();
+  const peer = await resolvePeer(chatId);
   const updates = await c.invoke(
     new Api.messages.CreateForumTopic({ peer, title, randomId: generateRandomLong() }),
   );
@@ -263,7 +270,7 @@ export async function createStorageGroup({ title, about = 'Архив фото �
     warnings.push(`Не удалось выдать боту права администратора (${describeError(err, { kind: 'mtproto' })}). Сделайте это вручную.`);
   }
 
-  peerCache = null;
+  peerCache.clear();
   return { chatId: `-100${channel.id}`, title, isForum, warnings };
 }
 
@@ -381,6 +388,32 @@ export async function messageSelf(text) {
   const c = await getClient();
   await c.sendMessage('me', { message: text });
   return true;
+}
+
+/* ── обратная дорога: скачать файл из Telegram ───────────────────────────── */
+
+/**
+ * Скачивает вложение сообщения на диск. Через аккаунт, а не бота: Bot API
+ * отдаёт на скачивание только файлы до 20 МБ, а на диске лежат и большие.
+ * @param {{chatId:string, messageId:number, destPath:string, onProgress?:(done:number,total:number)=>void}} opts
+ * @returns {Promise<number>} сколько байт записали
+ */
+export async function downloadMessageFile({ chatId, messageId, destPath, onProgress }) {
+  const c = await getClient();
+  const peer = await resolvePeer(chatId);
+
+  const [msg] = await c.getMessages(peer, { ids: [Number(messageId)] });
+  if (!msg) throw new Error(`Сообщение ${messageId} не найдено — возможно, его удалили`);
+  if (!msg.media) throw new Error(`В сообщении ${messageId} нет вложения`);
+
+  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+  const buffer = await c.downloadMedia(msg, {
+    progressCallback: (done, total) => onProgress?.(Number(done), Number(total)),
+  });
+  if (!buffer?.length) throw new Error('Telegram отдал пустой файл');
+
+  await fs.promises.writeFile(destPath, buffer);
+  return buffer.length;
 }
 
 /* ── участники группы ────────────────────────────────────────────────────── */

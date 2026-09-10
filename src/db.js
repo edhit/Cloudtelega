@@ -60,6 +60,38 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Ссылки-приглашения на диск: у каждой свой срок жизни и свой срок доступа
+-- для тех, кто по ней вошёл.
+CREATE TABLE IF NOT EXISTS invites (
+  id           INTEGER PRIMARY KEY,
+  chat_id      TEXT    NOT NULL,
+  link         TEXT    NOT NULL UNIQUE,
+  name         TEXT,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER,          -- когда ссылка перестаёт пускать (null — бессрочно)
+  access_ms    INTEGER,          -- сколько держать доступ вошедшему (null — навсегда)
+  member_limit INTEGER,
+  join_request INTEGER NOT NULL DEFAULT 0,
+  used         INTEGER NOT NULL DEFAULT 0,
+  revoked_at   INTEGER
+);
+
+-- Кто вошёл по ссылке и до какого момента ему открыт доступ.
+CREATE TABLE IF NOT EXISTS guests (
+  id          INTEGER PRIMARY KEY,
+  chat_id     TEXT    NOT NULL,
+  user_id     TEXT    NOT NULL,
+  name        TEXT,
+  username    TEXT,
+  invite_link TEXT,
+  invite_name TEXT,
+  joined_at   INTEGER NOT NULL,
+  expires_at  INTEGER,           -- когда выгонять (null — доступ бессрочный)
+  removed_at  INTEGER,
+  removed_why TEXT,              -- expired | manual | left
+  UNIQUE (chat_id, user_id)
+);
 `;
 
 /** Досоздаёт колонки в базах, созданных предыдущими версиями. */
@@ -79,6 +111,8 @@ function migrate(d) {
   add('files', 'video_file_id', 'TEXT');
   add('files', 'thumb_file_id', 'TEXT');
   add('hash_cache', 'name', 'TEXT');
+  // bucket: photos — личный архив снимков, drive — файловый диск
+  add('files', 'bucket', "TEXT NOT NULL DEFAULT 'photos'");
 
   // Пересчитываем stem_name: раньше суффикс _HEVC у видео Live Photo не отбрасывался,
   // из-за чего IMG_0373.jpg и IMG_0373_HEVC.MOV считались разными кадрами.
@@ -99,6 +133,8 @@ function migrate(d) {
     CREATE INDEX IF NOT EXISTS idx_files_identity ON files(name, size);
     CREATE INDEX IF NOT EXISTS idx_files_stem     ON files(stem_name, taken_at);
     CREATE INDEX IF NOT EXISTS idx_hash_identity  ON hash_cache(name, size, mtime);
+    CREATE INDEX IF NOT EXISTS idx_files_bucket   ON files(bucket, status);
+    CREATE INDEX IF NOT EXISTS idx_guests_expiry  ON guests(expires_at, removed_at);
   `);
 }
 
@@ -188,8 +224,8 @@ export function upsertPending(file) {
   const now = Date.now();
   openDb()
     .prepare(
-      `INSERT INTO files (sha256, name, abs_path, rel_path, size, mtime, taken_at, date_source, stem_key, stem_name, ext, kind, status, created_at)
-       VALUES (@sha256, @name, @absPath, @relPath, @size, @mtime, @takenAt, @dateSource, @stemKey, @stemName, @ext, @kind, 'pending', @now)
+      `INSERT INTO files (sha256, name, abs_path, rel_path, size, mtime, taken_at, date_source, stem_key, stem_name, ext, kind, bucket, status, created_at)
+       VALUES (@sha256, @name, @absPath, @relPath, @size, @mtime, @takenAt, @dateSource, @stemKey, @stemName, @ext, @kind, @bucket, 'pending', @now)
        ON CONFLICT(sha256) DO UPDATE SET
          abs_path    = excluded.abs_path,
          rel_path    = excluded.rel_path,
@@ -197,7 +233,8 @@ export function upsertPending(file) {
          taken_at    = excluded.taken_at,
          date_source = excluded.date_source,
          stem_key    = excluded.stem_key,
-         stem_name   = excluded.stem_name`,
+         stem_name   = excluded.stem_name,
+         bucket      = excluded.bucket`,
     )
     .run({
       sha256: file.sha256,
@@ -212,6 +249,7 @@ export function upsertPending(file) {
       stemName: file.stemName ?? null,
       ext: file.ext ?? null,
       kind: file.kind ?? null,
+      bucket: file.bucket ?? 'photos',
       now,
     });
   return findByHash(file.sha256);
@@ -256,7 +294,8 @@ export function markSkipped(sha256, reason) {
 export function stats() {
   const d = openDb();
   return {
-    byStatus: d.prepare('SELECT status, COUNT(*) n, COALESCE(SUM(size), 0) bytes FROM files GROUP BY status').all(),
+    byStatus: d.prepare(`SELECT status, COUNT(*) n, COALESCE(SUM(size), 0) bytes
+                           FROM files WHERE bucket = 'photos' GROUP BY status`).all(),
     byMethod: d.prepare(`SELECT method, COUNT(*) n FROM files WHERE status = 'sent' GROUP BY method`).all(),
     byYear: d
       .prepare(
@@ -264,7 +303,7 @@ export function stats() {
            FROM files WHERE status = 'sent' AND taken_at IS NOT NULL GROUP BY year ORDER BY year`,
       )
       .all(),
-    total: d.prepare('SELECT COUNT(*) n, COALESCE(SUM(size), 0) bytes FROM files').get(),
+    total: d.prepare(`SELECT COUNT(*) n, COALESCE(SUM(size), 0) bytes FROM files WHERE bucket = 'photos'`).get(),
   };
 }
 
@@ -349,20 +388,20 @@ export function strayLiveVideos(limit = 500) {
  * Страница записей — база может быть на сотни тысяч файлов,
  * поэтому список отдаётся порциями, а не целиком.
  */
-export function listFiles({ limit = 100, offset = 0 } = {}) {
+export function listFiles({ limit = 100, offset = 0, bucket = 'photos' } = {}) {
   const size = Math.max(1, Math.min(500, Number(limit) || 100));
   const from = Math.max(0, Number(offset) || 0);
   return openDb()
     .prepare(
-      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, topic_id,
-              file_type, thumb_file_id, last_error
-         FROM files ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT id, name, rel_path, size, kind, bucket, status, taken_at, sent_at, message_id, chat_id, topic_id,
+              file_type, file_id, thumb_file_id, last_error
+         FROM files WHERE bucket = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
-    .all(size, from);
+    .all(bucket, size, from);
 }
 
-export function countFiles() {
-  return Number(openDb().prepare('SELECT COUNT(*) n FROM files').get()?.n ?? 0);
+export function countFiles(bucket = 'photos') {
+  return Number(openDb().prepare('SELECT COUNT(*) n FROM files WHERE bucket = ?').get(bucket)?.n ?? 0);
 }
 
 /**
@@ -370,12 +409,12 @@ export function countFiles() {
  * LIKE в SQLite различает регистр за пределами латиницы, поэтому ищем сразу
  * по нескольким написаниям запроса.
  */
-export function searchFiles({ query = '', status = '', limit = 100, offset = 0 } = {}) {
+export function searchFiles({ query = '', status = '', limit = 100, offset = 0, bucket = 'photos' } = {}) {
   const size = Math.max(1, Math.min(500, Number(limit) || 100));
   const from = Math.max(0, Number(offset) || 0);
 
-  const where = [];
-  const params = [];
+  const where = ['bucket = ?'];
+  const params = [bucket];
 
   const q = String(query).trim();
   if (q) {
@@ -390,13 +429,13 @@ export function searchFiles({ query = '', status = '', limit = 100, offset = 0 }
     params.push(status);
   }
 
-  const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const filter = `WHERE ${where.join(' AND ')}`;
   const d = openDb();
   const total = Number(d.prepare(`SELECT COUNT(*) n FROM files ${filter}`).get(...params)?.n ?? 0);
   const rows = d
     .prepare(
-      `SELECT id, name, rel_path, size, kind, status, taken_at, sent_at, message_id, chat_id, topic_id,
-              file_type, thumb_file_id, last_error
+      `SELECT id, name, rel_path, size, kind, bucket, status, taken_at, sent_at, message_id, chat_id, topic_id,
+              file_type, file_id, thumb_file_id, last_error
          FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, size, from);
@@ -446,4 +485,123 @@ export function setMeta(key, value) {
   openDb()
     .prepare(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     .run(key, String(value));
+}
+
+/* ── диск: файлы отдельного «ведра» ──────────────────────────────────────── */
+
+/** Сколько всего лежит на диске и какого объёма. */
+export function driveStats(bucket = 'drive') {
+  return openDb()
+    .prepare(
+      `SELECT COUNT(*) n, COALESCE(SUM(size), 0) bytes,
+              SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) sent
+         FROM files WHERE bucket = ?`,
+    )
+    .get(bucket);
+}
+
+/** Одна запись по id — для скачивания обратно и для ссылки на сообщение. */
+export function fileById(id) {
+  return openDb().prepare('SELECT * FROM files WHERE id = ?').get(Number(id)) ?? null;
+}
+
+/* ── ссылки-приглашения ──────────────────────────────────────────────────── */
+
+export function addInvite({ chatId, link, name, expiresAt, accessMs, memberLimit, joinRequest }) {
+  const now = Date.now();
+  openDb()
+    .prepare(
+      `INSERT INTO invites (chat_id, link, name, created_at, expires_at, access_ms, member_limit, join_request)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(link) DO UPDATE SET
+         name = excluded.name, expires_at = excluded.expires_at, access_ms = excluded.access_ms`,
+    )
+    .run(
+      String(chatId), link, name ?? null, now,
+      expiresAt ?? null, accessMs ?? null, memberLimit ?? null, joinRequest ? 1 : 0,
+    );
+  return getInvite(link);
+}
+
+export function getInvite(link) {
+  return openDb().prepare('SELECT * FROM invites WHERE link = ?').get(link) ?? null;
+}
+
+export function listInvites({ chatId, includeRevoked = false } = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+  if (chatId) {
+    where.push('chat_id = ?');
+    params.push(String(chatId));
+  }
+  if (!includeRevoked) where.push('revoked_at IS NULL');
+  return openDb()
+    .prepare(`SELECT * FROM invites WHERE ${where.join(' AND ')} ORDER BY created_at DESC`)
+    .all(...params);
+}
+
+export function markInviteRevoked(link) {
+  openDb().prepare('UPDATE invites SET revoked_at = ? WHERE link = ?').run(Date.now(), link);
+}
+
+export function bumpInviteUsage(link) {
+  openDb().prepare('UPDATE invites SET used = used + 1 WHERE link = ?').run(link);
+}
+
+/* ── гости: кто вошёл и до какого момента ────────────────────────────────── */
+
+export function addGuest({ chatId, userId, name, username, inviteLink, inviteName, expiresAt }) {
+  const now = Date.now();
+  openDb()
+    .prepare(
+      `INSERT INTO guests (chat_id, user_id, name, username, invite_link, invite_name, joined_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(chat_id, user_id) DO UPDATE SET
+         name = excluded.name, username = excluded.username,
+         invite_link = excluded.invite_link, invite_name = excluded.invite_name,
+         joined_at = excluded.joined_at, expires_at = excluded.expires_at,
+         removed_at = NULL, removed_why = NULL`,
+    )
+    .run(String(chatId), String(userId), name ?? null, username ?? null,
+         inviteLink ?? null, inviteName ?? null, now, expiresAt ?? null);
+  return getGuest(chatId, userId);
+}
+
+export function getGuest(chatId, userId) {
+  return openDb()
+    .prepare('SELECT * FROM guests WHERE chat_id = ? AND user_id = ?')
+    .get(String(chatId), String(userId)) ?? null;
+}
+
+export function listGuests({ chatId, includeRemoved = false } = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+  if (chatId) {
+    where.push('chat_id = ?');
+    params.push(String(chatId));
+  }
+  if (!includeRemoved) where.push('removed_at IS NULL');
+  return openDb()
+    .prepare(`SELECT * FROM guests WHERE ${where.join(' AND ')} ORDER BY joined_at DESC`)
+    .all(...params);
+}
+
+/** Кому пора закрывать доступ: срок вышел, а из чата ещё не убрали. */
+export function guestsToExpire(now = Date.now()) {
+  return openDb()
+    .prepare('SELECT * FROM guests WHERE removed_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?')
+    .all(now);
+}
+
+export function markGuestRemoved(chatId, userId, why = 'expired') {
+  openDb()
+    .prepare('UPDATE guests SET removed_at = ?, removed_why = ? WHERE chat_id = ? AND user_id = ?')
+    .run(Date.now(), why, String(chatId), String(userId));
+}
+
+export function setGuestExpiry(chatId, userId, expiresAt) {
+  openDb()
+    .prepare('UPDATE guests SET expires_at = ? WHERE chat_id = ? AND user_id = ?')
+    .run(expiresAt ?? null, String(chatId), String(userId));
+  return getGuest(chatId, userId);
 }

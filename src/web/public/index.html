@@ -49,6 +49,29 @@
         </button>
       </li>
       <li>
+        <button data-pane="drive">
+          <!-- облако: файловый диск -->
+          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
+            <path d="M6.6 17.4a3.9 3.9 0 0 1-.4-7.8 4.9 4.9 0 0 1 9.4-1.2 3.5 3.5 0 0 1 .3 7 3.6 3.6 0 0 1-.4 0H6.6Z"/>
+            <path d="M11 14.4V9.6"/>
+            <path d="m8.9 11.5 2.1-2 2.1 2"/>
+          </svg>
+          <span class="nav-label">Диск</span>
+        </button>
+      </li>
+      <li>
+        <button data-pane="access">
+          <!-- два человека: кому открыт доступ -->
+          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
+            <circle cx="8.6" cy="8" r="2.7"/>
+            <path d="M3.6 17.4a5 5 0 0 1 10 0"/>
+            <path d="M14.6 5.6a2.7 2.7 0 0 1 0 5.2"/>
+            <path d="M16.2 13.2a5 5 0 0 1 2.2 4.2"/>
+          </svg>
+          <span class="nav-label">Кому открыт доступ</span>
+        </button>
+      </li>
+      <li>
         <button data-pane="archive">
           <!-- архивная коробка с прорезью-ручкой -->
           <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
@@ -523,6 +546,117 @@
           <div class="row-label"><b>Удалить профиль из программы</b><small>Сотрёт настройки, ключ и базу отправленного. Фото и сообщения в Telegram останутся</small></div>
           <button class="btn btn-danger" id="deleteProfile">Удалить…</button>
         </div>
+      </div>
+    </section>
+
+    <!-- ── Диск ──────────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-drive">
+      <h1>Диск</h1>
+      <p class="lead">Здесь лежат любые файлы — документы, архивы, музыка, проекты. Оригиналы, без пережатия: Telegram хранит их как есть, а программа помнит, что и куда положено, чтобы не загружать одно и то же дважды.</p>
+
+      <div class="note blue" id="driveWhere">
+        <b>Куда складывать диск.</b> Лучше в <b>отдельную приватную супергруппу с темами</b>:
+        темы работают как папки, а к диску вы будете давать доступ посторонним — в общем чате
+        им были бы видны и ваши снимки.
+      </div>
+
+      <div class="group-title">Чат для диска</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label"><b>Где хранится</b><small id="driveChatText">—</small></div>
+          <div class="row-side">
+            <button class="btn" id="driveCreate">Создать за меня</button>
+            <button class="btn" id="drivePick">Выбрать готовый</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Папки — темами</b><small>Верхняя папка на компьютере становится темой в чате</small></div>
+          <label class="switch"><input type="checkbox" id="driveFolders" checked><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Использовать чат архива</b><small>Если диск и снимки не жалко держать вместе</small></div>
+          <button class="btn" id="driveSameChat">Взять чат снимков</button>
+        </div>
+      </div>
+
+      <div class="group-title">Положить на диск</div>
+      <div class="group" style="padding: 14px 16px">
+        <div class="pathlist" id="driveQueue"></div>
+        <div class="btn-row">
+          <button class="btn" id="driveAdd">Добавить папку или файл…</button>
+          <button class="btn btn-primary" id="driveUpload">Загрузить</button>
+        </div>
+        <p class="hint">Папку программа обойдёт целиком, вложенные папки тоже.</p>
+      </div>
+
+      <div class="grid2" id="driveNumbers"></div>
+
+      <div class="group-title">Что на диске</div>
+      <div class="group" style="padding: 14px 16px">
+        <input type="text" id="driveSearch" placeholder="Имя файла или папка" autocomplete="off">
+        <p class="hint">Нажмите на файл — откроется сообщение в Telegram. «Скачать» вернёт его на компьютер.</p>
+      </div>
+      <div class="group" id="driveRows"></div>
+      <div class="btn-row" id="driveMoreRow" hidden>
+        <button class="btn" id="driveMore">Показать ещё 100</button>
+        <span class="hint" style="margin:0" id="driveCounter"></span>
+      </div>
+    </section>
+
+    <!-- ── Доступ ────────────────────────────────────────────────────── -->
+    <section class="pane" id="pane-access">
+      <h1>Кому открыт доступ</h1>
+      <p class="lead">Ссылка-приглашение на диск с собственным сроком. Когда срок выходит, программа убирает человека из чата — <b>убирает, а не банит</b>: захотите — пустите снова по новой ссылке.</p>
+
+      <div class="grid2" id="accessNumbers"></div>
+
+      <div class="group-title">Новая ссылка</div>
+      <div class="group">
+        <div class="row row-stack">
+          <label class="field-label" for="accessName">Для кого (необязательно)</label>
+          <input type="text" id="accessName" placeholder="Например, Маше на выходные" maxlength="32">
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Насколько дать доступ</b><small>Через это время человек будет убран из чата</small></div>
+          <div class="seg" id="segAccess"></div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Сколько человек пустить</b><small>По одноразовой ссылке войдёт только один</small></div>
+          <div class="seg" id="segLimit">
+            <label><input type="radio" name="acclimit" value="1" checked><span>Один</span></label>
+            <label><input type="radio" name="acclimit" value="5"><span>До пяти</span></label>
+            <label><input type="radio" name="acclimit" value="0"><span>Сколько угодно</span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Ссылка живёт</b><small>После этого по ней уже не войти, даже если не использовали</small></div>
+          <div class="seg" id="segLinkLife">
+            <label><input type="radio" name="acclife" value="48" checked><span>2 дня</span></label>
+            <label><input type="radio" name="acclife" value="168"><span>Неделю</span></label>
+            <label><input type="radio" name="acclife" value="0"><span>Бессрочно</span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Создать ссылку</b><small id="accessHint">Ссылку можно будет скопировать и отправить</small></div>
+          <button class="btn btn-primary" id="accessCreate">Создать</button>
+        </div>
+      </div>
+
+      <div class="group-title">Действующие ссылки</div>
+      <div class="group" id="accessLinks"></div>
+
+      <div class="btn-row" style="justify-content:space-between">
+        <span class="group-title" style="padding:0">Гости</span>
+        <button class="btn" id="accessSweep">Проверить сроки сейчас</button>
+      </div>
+      <div class="group" id="accessGuests"></div>
+
+      <div class="note">
+        <b>Как это работает.</b> Срок жизни ссылки Telegram сторожит сам. А вот выгнать того,
+        кто уже вошёл, он не умеет — это делает программа: раз в пять минут смотрит, у кого
+        вышло время, и убирает из чата. Значит, для автоматического закрытия доступа программа
+        должна быть запущена; если она стояла выключенной, всё просроченное закроется при
+        следующем запуске.
       </div>
     </section>
 

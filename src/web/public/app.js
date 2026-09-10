@@ -273,6 +273,8 @@ function show(pane) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
   if (pane === 'archive') loadArchive();
+  if (pane === 'drive') loadDrive();
+  if (pane === 'access') loadAccess();
   if (pane === 'profile') loadProfile();
   if (pane === 'folders') loadDevices();
   if (pane === 'chat') updateCreateAvailability();
@@ -1561,6 +1563,369 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
   const target = state.profile;
   await switchProfile('default', 'Основной');
   await deleteProfileFlow(target, label);
+}));
+
+/* ── диск: любые файлы, а не только снимки ───────────────────────────────── */
+
+let driveQueue = [];
+let driveOffset = 0;
+let driveTotal = 0;
+
+function renderDriveQueue() {
+  renderChips($('#driveQueue'), driveQueue.map((p) => ({ id: p, label: p, title: p })), {
+    empty: 'Пока ничего не выбрано',
+    onRemove: (item) => {
+      driveQueue = driveQueue.filter((p) => p !== item.id);
+      renderDriveQueue();
+    },
+  });
+  $('#driveUpload').disabled = !driveQueue.length;
+}
+
+async function loadDrive({ append = false } = {}) {
+  const query = $('#driveSearch').value.trim();
+  if (!append) driveOffset = 0;
+
+  const data = await api('/api/drive/search', { query, offset: driveOffset });
+  driveTotal = data.total;
+
+  $('#driveChatText').textContent = data.chatId
+    ? `${data.chatId}${data.separateChat ? ' — отдельный чат, снимки гостям не видны' : ' — тот же чат, что у снимков'}`
+    : 'Чат не выбран — создайте новый или подключите готовый';
+  $('#driveFolders').checked = data.folders;
+  $('#driveWhere').hidden = Boolean(data.chatId);
+
+  $('#driveNumbers').innerHTML = `
+    <div class="stat"><b>${data.files}</b><small>файлов на диске</small></div>
+    <div class="stat"><b>${humanSize(data.bytes)}</b><small>занято в Telegram</small></div>`;
+
+  const box = $('#driveRows');
+  if (!append) box.innerHTML = '';
+  if (!data.rows.length && !append) {
+    box.innerHTML = '<div class="row"><div class="row-label"><b>Диск пуст</b><small>Добавьте папку или файл выше и нажмите «Загрузить»</small></div></div>';
+  }
+  for (const row of data.rows) box.append(driveRow(row));
+
+  driveOffset += data.rows.length;
+  $('#driveMoreRow').hidden = driveOffset >= driveTotal;
+  $('#driveCounter').textContent = `Показано ${Math.min(driveOffset, driveTotal)} из ${driveTotal}`;
+  if (!append) renderDriveQueue();
+}
+
+function driveRow(r) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = '<div class="row-label"><b></b><small></small></div>';
+
+  const title = row.querySelector('b');
+  if (r.link) {
+    const a = document.createElement('a');
+    a.href = r.link;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = r.rel_path || r.name;
+    title.append(a);
+  } else {
+    title.textContent = r.rel_path || r.name;
+  }
+
+  const when = r.sent_at ? new Date(r.sent_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  row.querySelector('small').textContent =
+    `${humanSize(r.size)} · ${when}${r.status !== 'sent' ? ` · ${r.status}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
+
+  const side = document.createElement('div');
+  side.className = 'row-side';
+
+  const get = document.createElement('button');
+  get.className = 'btn btn-small';
+  get.textContent = 'Скачать';
+  get.disabled = r.status !== 'sent';
+  get.addEventListener('click', () => guard(get, async () => {
+    const saved = await api('/api/drive/download', { id: r.id });
+    toast(`Скачано: ${saved.name} → ${saved.path}`);
+  }));
+
+  const del = document.createElement('button');
+  del.className = 'btn btn-small btn-danger';
+  del.textContent = 'Убрать';
+  del.addEventListener('click', () => guard(del, async () => {
+    const ok = await askConfirm({
+      title: `Убрать ${r.name} с диска?`,
+      text: 'Сообщение в Telegram будет удалено, файл на компьютере останется.',
+      icon: '🗑',
+      okText: 'Убрать',
+      danger: true,
+    });
+    if (!ok) return;
+    await api('/api/drive/remove', { id: r.id });
+    await loadDrive();
+    toast('Убрано с диска');
+  }));
+
+  side.append(get, del);
+  row.append(side);
+  return row;
+}
+
+$('#driveAdd').addEventListener('click', () => guard(null, async () => {
+  const picked = await askText({
+    title: 'Что положить на диск',
+    text: 'Путь к папке или файлу на этом компьютере. Папку программа обойдёт целиком.',
+    placeholder: '/home/me/Документы',
+    okText: 'Добавить',
+  });
+  if (!picked) return;
+  if (!driveQueue.includes(picked)) driveQueue.push(picked);
+  renderDriveQueue();
+}));
+
+$('#driveUpload').addEventListener('click', (e) => guard(e.target, async () => {
+  await api('/api/drive/upload', { paths: driveQueue });
+  driveQueue = [];
+  renderDriveQueue();
+  toast('Загружаю на диск — смотрите лог на шаге «Проверка и запуск»');
+  show('finish');
+  startPolling();
+}));
+
+$('#driveFolders').addEventListener('change', () => guard(null, async () => {
+  await api('/api/settings', { DRIVE_FOLDERS: String($('#driveFolders').checked) });
+  toast($('#driveFolders').checked ? 'Папки будут темами' : 'Всё одной лентой');
+}));
+
+$('#driveSameChat').addEventListener('click', (e) => guard(e.target, async () => {
+  if (!state?.settings.chatId) throw new Error('Сначала выберите чат для снимков на шаге 4');
+  await api('/api/settings', { DRIVE_CHAT_ID: state.settings.chatId });
+  await refresh();
+  await loadDrive();
+  toast('Диск будет храниться там же, где снимки');
+}));
+
+$('#drivePick').addEventListener('click', (e) => guard(e.target, async () => {
+  const { chats } = await api('/api/detect-chats', {});
+  const picked = await pickFromList({
+    title: 'Куда складывать диск',
+    text: 'Показываю чаты, куда добавлен ваш бот. Лучше отдельный от снимков — к диску вы будете давать доступ другим.',
+    items: chats.map((chat) => ({
+      id: chat.id,
+      label: chat.title,
+      sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : 'без тем'].join(' · '),
+      photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
+    })),
+    empty: 'Ничего не нашлось. Добавьте бота в нужный чат, напишите там сообщение и откройте список снова.',
+  });
+  if (!picked) return;
+  await api('/api/settings', { DRIVE_CHAT_ID: picked.id });
+  await refresh();
+  await loadDrive();
+  toast(`Диск: «${picked.label}»`);
+}));
+
+$('#driveCreate').addEventListener('click', (e) => guard(e.target, async () => {
+  const title = await askText({
+    title: 'Название группы для диска',
+    text: 'Программа создаст приватную супергруппу с темами и сделает бота администратором.',
+    value: 'Мой диск',
+    okText: 'Создать',
+  });
+  if (!title) return;
+
+  const created = await api('/api/create-group', { title, topics: true });
+  await api('/api/settings', { DRIVE_CHAT_ID: created.chatId });
+  await refresh();
+  await loadDrive();
+  toast(`Диск создан: «${created.title}»`);
+  for (const w of created.warnings ?? []) toast(w, true);
+}));
+
+let driveTimer = null;
+$('#driveSearch').addEventListener('input', () => {
+  clearTimeout(driveTimer);
+  driveTimer = setTimeout(() => guard(null, () => loadDrive()), 350);
+});
+
+$('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive({ append: true })));
+
+/* ── доступ: ссылки со сроком и гости ────────────────────────────────────── */
+
+let accessData = null;
+
+async function loadAccess() {
+  accessData = await api('/api/access').catch((err) => {
+    toast(err.message, true);
+    return null;
+  });
+  if (!accessData) return;
+
+  renderAccessPresets();
+
+  const live = accessData.guests.filter((g) => !g.expired).length;
+  $('#accessNumbers').innerHTML = `
+    <div class="stat"><b>${live}</b><small>гостей с открытым доступом</small></div>
+    <div class="stat"><b>${accessData.invites.filter((i) => !i.dead).length}</b><small>действующих ссылок</small></div>`;
+
+  renderAccessLinks();
+  renderAccessGuests();
+}
+
+function renderAccessPresets() {
+  const seg = $('#segAccess');
+  if (seg.children.length) return;
+  for (const [i, preset] of (accessData?.presets ?? []).entries()) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'accpreset';
+    input.value = preset.id;
+    if (preset.id === 'week') input.checked = true;
+    const span = document.createElement('span');
+    span.textContent = preset.label;
+    label.append(input, span);
+    seg.append(label);
+    void i;
+  }
+}
+
+function renderAccessLinks() {
+  const box = $('#accessLinks');
+  box.innerHTML = '';
+  if (!accessData.invites.length) {
+    box.innerHTML = '<div class="row"><div class="row-label"><b>Ссылок пока нет</b><small>Создайте выше — и отправьте тому, кого пускаете</small></div></div>';
+    return;
+  }
+
+  for (const invite of accessData.invites) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<div class="row-label"><b></b><small></small></div>';
+    row.querySelector('b').textContent = invite.name || 'Без названия';
+    row.querySelector('small').textContent =
+      `Доступ: ${invite.accessLabel} · ссылка ${invite.dead ? 'уже не работает' : `живёт ${invite.linkLeft}`}` +
+      `${invite.used ? ` · вошли: ${invite.used}` : ''}`;
+
+    const side = document.createElement('div');
+    side.className = 'row-side';
+
+    const copy = document.createElement('button');
+    copy.className = 'btn btn-small';
+    copy.textContent = 'Скопировать';
+    copy.disabled = invite.dead;
+    copy.addEventListener('click', () => guard(copy, async () => {
+      await navigator.clipboard.writeText(invite.link);
+      toast('Ссылка скопирована — отправьте её тому, кого пускаете');
+    }));
+
+    const revoke = document.createElement('button');
+    revoke.className = 'btn btn-small btn-danger';
+    revoke.textContent = 'Отозвать';
+    revoke.addEventListener('click', () => guard(revoke, async () => {
+      accessData = await api('/api/access/revoke', { link: invite.link });
+      renderAccessLinks();
+      toast('Ссылка отозвана — по ней больше не войти');
+    }));
+
+    side.append(copy, revoke);
+    row.append(side);
+    box.append(row);
+  }
+}
+
+function renderAccessGuests() {
+  const box = $('#accessGuests');
+  box.innerHTML = '';
+  if (!accessData.guests.length) {
+    box.innerHTML = '<div class="row"><div class="row-label"><b>Гостей нет</b><small>Никто ещё не вошёл по вашим ссылкам</small></div></div>';
+    return;
+  }
+
+  for (const guest of accessData.guests) {
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const avatar = makeAvatar({
+      key: guest.user_id,
+      letter: guest.username ?? guest.name,
+      photo: `/api/user-photo?id=${encodeURIComponent(guest.user_id)}`,
+    });
+
+    const label = document.createElement('div');
+    label.className = 'row-label';
+    const title = document.createElement('b');
+    title.textContent = guest.username ? `@${guest.username}` : guest.name;
+    const sub = document.createElement('small');
+    sub.textContent = `${guest.expired ? 'срок истёк — уберём при ближайшей проверке' : `осталось ${guest.left}`}` +
+      `${guest.invite_name ? ` · по ссылке «${guest.invite_name}»` : ''}`;
+    label.append(title, sub);
+
+    const side = document.createElement('div');
+    side.className = 'row-side';
+
+    const extend = document.createElement('button');
+    extend.className = 'btn btn-small';
+    extend.textContent = 'Продлить';
+    extend.addEventListener('click', () => guard(extend, async () => {
+      const picked = await pickFromList({
+        title: `Продлить доступ: ${guest.name}`,
+        text: 'На сколько добавить времени.',
+        items: accessData.presets.map((p) => ({ id: p.id, label: p.label })),
+        empty: '',
+      });
+      if (!picked) return;
+      accessData = await api('/api/access/extend', { userId: guest.user_id, preset: picked.id });
+      renderAccessGuests();
+      toast('Доступ продлён');
+    }));
+
+    const kick = document.createElement('button');
+    kick.className = 'btn btn-small btn-danger';
+    kick.textContent = 'Закрыть доступ';
+    kick.addEventListener('click', () => guard(kick, async () => {
+      const ok = await askConfirm({
+        title: `Закрыть доступ: ${guest.name}?`,
+        text: 'Человека уберут из чата. Бана не будет — по новой ссылке он сможет войти снова.',
+        icon: '🚪',
+        okText: 'Закрыть доступ',
+        danger: true,
+      });
+      if (!ok) return;
+      accessData = await api('/api/access/kick', { userId: guest.user_id });
+      renderAccessGuests();
+      toast('Доступ закрыт, человек не забанен');
+    }));
+
+    side.append(extend, kick);
+    row.append(avatar, label, side);
+    box.append(row);
+  }
+}
+
+$('#accessCreate').addEventListener('click', (e) => guard(e.target, async () => {
+  const preset = $('#segAccess input:checked')?.value ?? 'week';
+  const limit = Number($('#segLimit input:checked')?.value ?? 1);
+  const life = Number($('#segLinkLife input:checked')?.value ?? 48);
+
+  const res = await api('/api/access/link', {
+    name: $('#accessName').value.trim() || undefined,
+    preset,
+    memberLimit: limit || null,
+    linkHours: life || null,
+  });
+
+  accessData = res;
+  $('#accessName').value = '';
+  renderAccessLinks();
+  renderAccessGuests();
+
+  await navigator.clipboard.writeText(res.invite.link).catch(() => {});
+  toast('Ссылка создана и скопирована');
+}));
+
+$('#accessSweep').addEventListener('click', (e) => guard(e.target, async () => {
+  const r = await api('/api/access/sweep', {});
+  accessData = r;
+  renderAccessLinks();
+  renderAccessGuests();
+  toast(r.removed.length ? `Убрано по сроку: ${r.removed.length}` : 'Все сроки в порядке');
 }));
 
 /* ── экран замка ─────────────────────────────────────────────────────────── */
