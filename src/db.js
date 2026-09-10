@@ -113,6 +113,8 @@ function migrate(d) {
   add('hash_cache', 'name', 'TEXT');
   // bucket: photos — личный архив снимков, drive — файловый диск
   add('files', 'bucket', "TEXT NOT NULL DEFAULT 'photos'");
+  // folder — папка диска, в которой лежит файл (пусто = корень)
+  add('files', 'folder', 'TEXT');
 
   // Пересчитываем stem_name: раньше суффикс _HEVC у видео Live Photo не отбрасывался,
   // из-за чего IMG_0373.jpg и IMG_0373_HEVC.MOV считались разными кадрами.
@@ -134,6 +136,7 @@ function migrate(d) {
     CREATE INDEX IF NOT EXISTS idx_files_stem     ON files(stem_name, taken_at);
     CREATE INDEX IF NOT EXISTS idx_hash_identity  ON hash_cache(name, size, mtime);
     CREATE INDEX IF NOT EXISTS idx_files_bucket   ON files(bucket, status);
+    CREATE INDEX IF NOT EXISTS idx_files_folder   ON files(bucket, folder);
     CREATE INDEX IF NOT EXISTS idx_guests_expiry  ON guests(expires_at, removed_at);
   `);
 }
@@ -224,8 +227,8 @@ export function upsertPending(file) {
   const now = Date.now();
   openDb()
     .prepare(
-      `INSERT INTO files (sha256, name, abs_path, rel_path, size, mtime, taken_at, date_source, stem_key, stem_name, ext, kind, bucket, status, created_at)
-       VALUES (@sha256, @name, @absPath, @relPath, @size, @mtime, @takenAt, @dateSource, @stemKey, @stemName, @ext, @kind, @bucket, 'pending', @now)
+      `INSERT INTO files (sha256, name, abs_path, rel_path, size, mtime, taken_at, date_source, stem_key, stem_name, ext, kind, bucket, folder, status, created_at)
+       VALUES (@sha256, @name, @absPath, @relPath, @size, @mtime, @takenAt, @dateSource, @stemKey, @stemName, @ext, @kind, @bucket, @folder, 'pending', @now)
        ON CONFLICT(sha256) DO UPDATE SET
          abs_path    = excluded.abs_path,
          rel_path    = excluded.rel_path,
@@ -234,7 +237,8 @@ export function upsertPending(file) {
          date_source = excluded.date_source,
          stem_key    = excluded.stem_key,
          stem_name   = excluded.stem_name,
-         bucket      = excluded.bucket`,
+         bucket      = excluded.bucket,
+         folder      = excluded.folder`,
     )
     .run({
       sha256: file.sha256,
@@ -250,6 +254,7 @@ export function upsertPending(file) {
       ext: file.ext ?? null,
       kind: file.kind ?? null,
       bucket: file.bucket ?? 'photos',
+      folder: file.folder ?? null,
       now,
     });
   return findByHash(file.sha256);
@@ -409,7 +414,7 @@ export function countFiles(bucket = 'photos') {
  * LIKE в SQLite различает регистр за пределами латиницы, поэтому ищем сразу
  * по нескольким написаниям запроса.
  */
-export function searchFiles({ query = '', status = '', limit = 100, offset = 0, bucket = 'photos' } = {}) {
+export function searchFiles({ query = '', status = '', limit = 100, offset = 0, bucket = 'photos', folder = null } = {}) {
   const size = Math.max(1, Math.min(500, Number(limit) || 100));
   const from = Math.max(0, Number(offset) || 0);
 
@@ -429,12 +434,21 @@ export function searchFiles({ query = '', status = '', limit = 100, offset = 0, 
     params.push(status);
   }
 
+  // folder === null — не фильтруем вовсе; '' — корень диска
+  if (folder !== null && folder !== undefined) {
+    if (folder === '') where.push("(folder IS NULL OR folder = '')");
+    else {
+      where.push('folder = ?');
+      params.push(folder);
+    }
+  }
+
   const filter = `WHERE ${where.join(' AND ')}`;
   const d = openDb();
   const total = Number(d.prepare(`SELECT COUNT(*) n FROM files ${filter}`).get(...params)?.n ?? 0);
   const rows = d
     .prepare(
-      `SELECT id, name, rel_path, size, kind, bucket, status, taken_at, sent_at, message_id, chat_id, topic_id,
+      `SELECT id, name, rel_path, size, kind, bucket, folder, status, taken_at, sent_at, message_id, chat_id, topic_id,
               file_type, file_id, thumb_file_id, last_error
          FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
@@ -604,4 +618,49 @@ export function setGuestExpiry(chatId, userId, expiresAt) {
     .prepare('UPDATE guests SET expires_at = ? WHERE chat_id = ? AND user_id = ?')
     .run(expiresAt ?? null, String(chatId), String(userId));
   return getGuest(chatId, userId);
+}
+
+/* ── папки диска ─────────────────────────────────────────────────────────── */
+
+/**
+ * Папки диска со счётчиками. Папка существует, пока в ней что-то лежит
+ * или пока о ней есть запись в topics — иначе только что созданная пустая
+ * папка исчезала бы сразу после создания.
+ */
+export function listDriveFolders(chatId, bucket = 'drive') {
+  const d = openDb();
+  const counted = d
+    .prepare(
+      `SELECT folder AS name, COUNT(*) n, COALESCE(SUM(size), 0) bytes
+         FROM files
+        WHERE bucket = ? AND folder IS NOT NULL AND folder <> ''
+        GROUP BY folder`,
+    )
+    .all(bucket);
+
+  const known = new Map(counted.map((f) => [f.name, { ...f, topicId: null }]));
+  if (chatId) {
+    for (const t of d.prepare('SELECT key, topic_id FROM topics WHERE chat_id = ?').all(String(chatId))) {
+      const entry = known.get(t.key) ?? { name: t.key, n: 0, bytes: 0 };
+      entry.topicId = t.topic_id;
+      known.set(t.key, entry);
+    }
+  }
+
+  return [...known.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+/** Сколько лежит в корне диска — там, где папка не указана. */
+export function driveRootCount(bucket = 'drive') {
+  return Number(
+    openDb()
+      .prepare(`SELECT COUNT(*) n FROM files WHERE bucket = ? AND (folder IS NULL OR folder = '')`)
+      .get(bucket)?.n ?? 0,
+  );
+}
+
+/** Переложить файл в другую папку (в самом Telegram сообщение не двигается). */
+export function setFileFolder(id, folder) {
+  openDb().prepare('UPDATE files SET folder = ? WHERE id = ?').run(folder || null, Number(id));
+  return fileById(id);
 }

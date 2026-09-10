@@ -267,12 +267,19 @@ const humanSize = (bytes) => {
 
 /* ── навигация ───────────────────────────────────────────────────────────── */
 
+// Шаги настройки: попав на любой из них, раскрываем группу в меню,
+// иначе человек оказывается на странице, которой не видно в списке.
+const SETUP_PANES = new Set(['start', 'bot', 'account', 'chat', 'folders', 'prefs', 'finish']);
+
 function show(pane) {
+  if (SETUP_PANES.has(pane)) openSetup();
   $$('.pane').forEach((p) => p.classList.toggle('active', p.id === `pane-${pane}`));
-  $$('#nav button, #navExtra button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.pane === pane)));
+  $$('#nav button, #navExtra button, #navApps button').forEach((b) =>
+    b.setAttribute('aria-current', String(b.dataset.pane === pane)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
   if (pane === 'archive') loadArchive();
+  if (pane === 'home') loadHome();
   if (pane === 'drive') loadDrive();
   if (pane === 'access') loadAccess();
   if (pane === 'profile') loadProfile();
@@ -291,6 +298,147 @@ function markDone(pane, done) {
   num.classList.toggle('done', done);
   num.textContent = done ? '✓' : num.dataset.n ?? num.textContent;
 }
+
+/* ── приложения сервиса ──────────────────────────────────────────────────── */
+
+/**
+ * Реестр приложений. Добавить новый раздел — добавить сюда запись:
+ * из неё строятся и плитки на главной, и пункты бокового меню.
+ * ready() решает, настроено ли приложение, stat() — что написать на плитке.
+ */
+const APPS = [
+  {
+    id: 'drive',
+    title: 'Диск',
+    about: 'Любые файлы: документы, архивы, музыка. Папками и с поиском.',
+    tint: '#007aff',
+    icon: '<path d="M6.6 17.4a3.9 3.9 0 0 1-.4-7.8 4.9 4.9 0 0 1 9.4-1.2 3.5 3.5 0 0 1 .3 7H6.6Z"/><path d="M11 14.4V9.6"/><path d="m8.9 11.5 2.1-2 2.1 2"/>',
+    ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
+    stat: () => (home?.drive?.files ? `${home.drive.files} файлов · ${humanSize(home.drive.bytes)}` : 'Пусто — перетащите файлы'),
+  },
+  {
+    id: 'archive',
+    title: 'Фотоархив',
+    about: 'Снимки с телефона и дисков — по годам, без повторов.',
+    tint: '#34c759',
+    icon: '<rect x="3" y="5.6" width="16" height="11.4" rx="2.4"/><circle cx="11" cy="11.3" r="3"/><path d="M7.4 5.6l1-1.8h5.2l1 1.8"/>',
+    ready: () => Boolean(state?.settings.chatId),
+    stat: () => (home?.photos?.n ? `${home.photos.n} снимков · ${humanSize(home.photos.bytes)}` : 'Пока пусто'),
+  },
+  {
+    id: 'access',
+    title: 'Доступ',
+    about: 'Ссылки на диск со сроком. Время вышло — гостя убирают.',
+    tint: '#ff9500',
+    icon: '<circle cx="8.6" cy="8" r="2.7"/><path d="M3.6 17.4a5 5 0 0 1 10 0"/><path d="M14.6 5.6a2.7 2.7 0 0 1 0 5.2"/><path d="M16.2 13.2a5 5 0 0 1 2.2 4.2"/>',
+    ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
+    stat: () => (home?.access?.guests ? `${home.access.guests} гостей внутри` : 'Никого не пускали'),
+  },
+  {
+    id: 'finish',
+    title: 'Отправка',
+    about: 'Залить всё новое с диска или телефона и следить за ходом.',
+    tint: '#af52de',
+    icon: '<path d="M11 15.4V4.6"/><path d="m6.8 8.8 4.2-4.2 4.2 4.2"/><path d="M4.4 14.6v1.8a2 2 0 0 0 2 2h9.2a2 2 0 0 0 2-2v-1.8"/>',
+    ready: () => Boolean(state?.settings.chatId && state?.settings.scanPaths?.length),
+    stat: () => (state?.job?.running ? 'Сейчас идёт' : 'Готово к запуску'),
+  },
+];
+
+function appIcon(app) {
+  const span = document.createElement('span');
+  span.className = 'app-icon';
+  span.style.setProperty('--tint', app.tint);
+  span.innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true">${app.icon}</svg>`;
+  return span;
+}
+
+function renderAppNav() {
+  const list = $('#navApps');
+  list.innerHTML = '';
+
+  const items = [{ id: 'home', title: 'Главная', icon: '<path d="M4 9.6 11 4l7 5.6v7.2a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 16.8V9.6Z"/><path d="M9 18.4v-5.2h4v5.2"/>' }, ...APPS];
+  for (const app of items) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.dataset.pane = app.id;
+    btn.innerHTML = `<svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">${app.icon}</svg>`;
+    const label = document.createElement('span');
+    label.className = 'nav-label';
+    label.textContent = app.title;
+    btn.append(label);
+    btn.addEventListener('click', () => show(app.id));
+    li.append(btn);
+    list.append(li);
+  }
+}
+
+/* ── главный экран ───────────────────────────────────────────────────────── */
+
+let home = null;
+
+async function loadHome() {
+  home = await api('/api/home').catch(() => null);
+
+  const label = profileData?.displayName || (state?.profile === 'default' ? 'Основной' : state?.profile);
+  $('#homeTitle').textContent = label ? `Облако: ${label}` : 'Cloudtelega';
+  avatarStyle($('#homeAvatar'), {
+    name: state?.profile ?? 'default',
+    hasAvatar: state?.profiles?.find((p) => p.active)?.hasAvatar ?? false,
+    letter: label,
+  });
+
+  renderAppTiles();
+
+  const total = (home?.photos?.bytes ?? 0) + (home?.drive?.bytes ?? 0);
+  $('#homeNumbers').innerHTML = `
+    <div class="stat"><b>${humanSize(total)}</b><small>всего в Telegram — место не ограничено</small></div>
+    <div class="stat"><b>${(home?.photos?.n ?? 0) + (home?.drive?.files ?? 0)}</b><small>файлов под присмотром</small></div>`;
+
+  // Чего не хватает до полноценной работы
+  const missing = [];
+  if (!state?.settings.botTokenSet) missing.push('бот');
+  if (!state?.settings.chatId) missing.push('чат для снимков');
+  if (!state?.settings.sessionSet) missing.push('вход в аккаунт (для файлов больше 50 МБ)');
+  $('#homeSetup').hidden = !missing.length;
+  $('#homeSetupText').textContent = missing.length ? `Осталось подключить: ${missing.join(', ')}.` : '';
+}
+
+function renderAppTiles() {
+  const box = $('#appTiles');
+  box.innerHTML = '';
+
+  for (const app of APPS) {
+    const tile = document.createElement('button');
+    tile.className = 'app-tile';
+    tile.style.setProperty('--tint', app.tint);
+    tile.dataset.ready = String(app.ready());
+
+    const title = document.createElement('b');
+    title.textContent = app.title;
+    const about = document.createElement('small');
+    about.textContent = app.about;
+    const stat = document.createElement('span');
+    stat.className = 'app-stat';
+    stat.textContent = app.ready() ? app.stat() : 'Нужно настроить';
+
+    tile.append(appIcon(app), title, about, stat);
+    tile.addEventListener('click', () => show(app.id));
+    box.append(tile);
+  }
+}
+
+$('#homeSetupGo').addEventListener('click', () => {
+  openSetup();
+  show(!state?.settings.botTokenSet ? 'bot' : !state?.settings.chatId ? 'chat' : 'account');
+});
+
+function openSetup(open = true) {
+  $('#nav').hidden = !open;
+  $('#setupToggle').setAttribute('aria-expanded', String(open));
+}
+
+$('#setupToggle').addEventListener('click', () => openSetup($('#nav').hidden));
 
 /* ── чипы: показываем имена, а не технические идентификаторы ─────────────── */
 
@@ -1565,11 +1713,396 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
   await deleteProfileFlow(target, label);
 }));
 
-/* ── диск: любые файлы, а не только снимки ───────────────────────────────── */
+/* ── диск: настоящий файловый менеджер ───────────────────────────────────── */
 
+// Где мы сейчас: '' — корень, иначе имя папки
+const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null };
 let driveQueue = [];
-let driveOffset = 0;
-let driveTotal = 0;
+
+const FILE_ICONS = [
+  [/\.(jpe?g|png|gif|webp|heic|heif|avif|bmp|tiff?)$/i, '🖼'],
+  [/\.(mp4|mov|mkv|avi|webm|m4v|mpe?g|3gp)$/i, '🎬'],
+  [/\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i, '🎵'],
+  [/\.(zip|rar|7z|tar|gz|bz2|xz)$/i, '🗜'],
+  [/\.pdf$/i, '📕'],
+  [/\.(docx?|odt|rtf|pages)$/i, '📄'],
+  [/\.(xlsx?|csv|ods|numbers)$/i, '📊'],
+  [/\.(pptx?|odp|key)$/i, '📽'],
+  [/\.(txt|md|log)$/i, '📝'],
+  [/\.(js|ts|json|html|css|py|sh|java|go|rs|c|cpp)$/i, '⌨️'],
+];
+
+const fileIcon = (name) => FILE_ICONS.find(([re]) => re.test(name))?.[1] ?? '📦';
+
+async function loadDrive({ append = false } = {}) {
+  if (!append) drive.offset = 0;
+
+  const data = await api('/api/drive/search', {
+    query: drive.query,
+    folder: drive.query ? null : drive.folder,
+    offset: drive.offset,
+  });
+  drive.data = data;
+  drive.total = data.total;
+
+  $('#driveWhere').hidden = Boolean(data.chatId);
+  $('#driveChatText').textContent = data.chatId
+    ? `${data.chatId}${data.separateChat ? ' — отдельный чат, снимки гостям не видны' : ' — тот же чат, что у снимков'}`
+    : 'не выбран';
+  $('#driveFolders').checked = data.folders;
+
+  renderCrumbs();
+  renderDriveBody(data, append);
+
+  drive.offset += data.rows.length;
+  $('#driveMoreRow').hidden = drive.offset >= drive.total;
+  $('#driveCounter').textContent = `Показано ${Math.min(drive.offset, drive.total)} из ${drive.total}`;
+  if (!append) renderDriveQueue();
+}
+
+function renderCrumbs() {
+  const box = $('#driveCrumbs');
+  box.innerHTML = '';
+
+  if (drive.query) {
+    const label = document.createElement('span');
+    label.className = 'crumb-current';
+    label.textContent = `Поиск: ${drive.query}`;
+    box.append(label);
+    return;
+  }
+
+  const rootBtn = document.createElement('button');
+  rootBtn.textContent = 'Диск';
+  rootBtn.addEventListener('click', () => guard(null, () => openFolder('')));
+
+  if (!drive.folder) {
+    const here = document.createElement('span');
+    here.className = 'crumb-current';
+    here.textContent = 'Диск';
+    box.append(here);
+    return;
+  }
+
+  const sep = document.createElement('span');
+  sep.className = 'crumb-sep';
+  sep.textContent = '›';
+  const here = document.createElement('span');
+  here.className = 'crumb-current';
+  here.textContent = drive.folder;
+  box.append(rootBtn, sep, here);
+}
+
+function renderDriveBody(data, append) {
+  const box = $('#driveBody');
+  if (!append) box.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = drive.view === 'grid' ? 'files' : 'files-list';
+
+  // Папки показываем только в корне и только когда не ищем
+  if (!append && !drive.query && !drive.folder) {
+    for (const folder of data.list ?? []) list.append(folderCard(folder));
+  }
+
+  for (const row of data.rows) list.append(fileCard(row));
+
+  if (!list.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-empty';
+    empty.innerHTML = drive.query
+      ? '<b>Ничего не нашлось</b>Попробуйте другое слово'
+      : '<b>Здесь пусто</b>Перетащите файлы в это окно — они уедут в Telegram';
+    box.append(empty);
+    return;
+  }
+
+  if (append && box.lastElementChild?.classList.contains(drive.view === 'grid' ? 'files' : 'files-list')) {
+    box.lastElementChild.append(...list.children);
+  } else {
+    box.append(list);
+  }
+}
+
+function folderCard(folder) {
+  const card = document.createElement('div');
+  card.className = drive.view === 'grid' ? 'file-card folder' : 'file-row folder';
+  card.title = folder.name;
+
+  const icon = document.createElement('span');
+  icon.className = 'file-icon';
+  icon.textContent = '📁';
+
+  const name = document.createElement('span');
+  name.className = 'file-name';
+  name.textContent = folder.name;
+
+  const sub = document.createElement('span');
+  sub.className = 'file-sub';
+  sub.textContent = folder.n ? `${folder.n} · ${humanSize(folder.bytes)}` : 'пусто';
+
+  card.append(icon, name, sub);
+  card.addEventListener('click', () => guard(null, () => openFolder(folder.name)));
+  return card;
+}
+
+function fileCard(r) {
+  const card = document.createElement('div');
+  card.className = drive.view === 'grid' ? 'file-card' : 'file-row';
+  card.title = `${r.name}${r.folder ? ` · папка ${r.folder}` : ''}`;
+
+  const icon = document.createElement('span');
+  icon.className = 'file-icon';
+  icon.textContent = r.status === 'sent' ? fileIcon(r.name) : '⏳';
+
+  const name = document.createElement('span');
+  name.className = 'file-name';
+  name.textContent = r.name;
+
+  const sub = document.createElement('span');
+  sub.className = 'file-sub';
+  sub.textContent = r.status === 'sent'
+    ? humanSize(r.size) + (drive.query && r.folder ? ` · ${r.folder}` : '')
+    : (r.last_error ? 'не ушёл' : 'в очереди');
+
+  const menu = document.createElement('button');
+  menu.className = 'file-menu';
+  menu.textContent = '⋯';
+  menu.title = 'Что сделать';
+  menu.addEventListener('click', (e) => {
+    e.stopPropagation();
+    guard(null, () => fileActions(r));
+  });
+
+  card.append(icon, name, sub, menu);
+  // Щелчок по файлу открывает само сообщение в Telegram
+  card.addEventListener('click', () => {
+    if (r.link) window.open(r.link, '_blank', 'noopener');
+    else toast('Файл ещё не отправлен', true);
+  });
+  return card;
+}
+
+async function fileActions(r) {
+  const items = [
+    { id: 'download', label: 'Скачать на компьютер', sub: 'Вернуть файл из Telegram' },
+    { id: 'move', label: 'Переложить в папку', sub: 'Сменить папку на диске' },
+    { id: 'open', label: 'Открыть в Telegram', sub: 'Показать само сообщение' },
+    { id: 'remove', label: 'Убрать с диска', sub: 'Удалить сообщение и запись' },
+  ];
+  const picked = await pickFromList({ title: r.name, text: humanSize(r.size), items, empty: '' });
+  if (!picked) return;
+
+  if (picked.id === 'open') {
+    if (r.link) window.open(r.link, '_blank', 'noopener');
+    return;
+  }
+
+  if (picked.id === 'download') {
+    const saved = await api('/api/drive/download', { id: r.id });
+    toast(`Скачано: ${saved.name} → ${saved.path}`);
+    return;
+  }
+
+  if (picked.id === 'move') {
+    const folders = drive.data?.list ?? [];
+    const target = await pickFromList({
+      title: 'Куда переложить',
+      text: 'В самом Telegram сообщение останется на месте — меняется только папка на диске.',
+      items: [{ id: '', label: 'В корень диска' }, ...folders.map((f) => ({ id: f.name, label: f.name, sub: `${f.n} файлов` }))],
+      empty: 'Папок пока нет — создайте первую кнопкой «Новая папка».',
+    });
+    if (!target) return;
+    await api('/api/drive/move', { id: r.id, folder: target.id, from: drive.folder });
+    await loadDrive();
+    toast(target.id ? `Переложено в «${target.id}»` : 'Переложено в корень');
+    return;
+  }
+
+  const ok = await askConfirm({
+    title: `Убрать ${r.name} с диска?`,
+    text: 'Сообщение в Telegram будет удалено. Файл на компьютере, если он там есть, останется.',
+    icon: '🗑',
+    okText: 'Убрать',
+    danger: true,
+  });
+  if (!ok) return;
+  await api('/api/drive/remove', { id: r.id });
+  await loadDrive();
+  toast('Убрано с диска');
+}
+
+async function openFolder(name) {
+  drive.folder = name;
+  drive.query = '';
+  $('#driveSearch').value = '';
+  await loadDrive();
+}
+
+/* ── перетаскивание ──────────────────────────────────────────────────────── */
+
+const dropZone = () => $('#driveDrop');
+let dragDepth = 0;
+
+// dragenter/dragleave срабатывают и на вложенных элементах, поэтому считаем глубину
+dropZone().addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer?.types?.includes('Files')) return;
+  e.preventDefault();
+  dragDepth += 1;
+  dropZone().classList.add('over');
+});
+dropZone().addEventListener('dragover', (e) => {
+  if (!e.dataTransfer?.types?.includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+dropZone().addEventListener('dragleave', () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropZone().classList.remove('over');
+});
+dropZone().addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropZone().classList.remove('over');
+  const files = [...(e.dataTransfer?.files ?? [])];
+  if (files.length) guard(null, () => uploadFiles(files));
+});
+
+$('#drivePickFiles').addEventListener('click', () => $('#driveFileInput').click());
+$('#driveFileInput').addEventListener('change', () => {
+  const files = [...($('#driveFileInput').files ?? [])];
+  $('#driveFileInput').value = '';
+  if (files.length) guard(null, () => uploadFiles(files));
+});
+
+/** Загружает выбранные файлы по одному, показывая полоску на каждый. */
+async function uploadFiles(files) {
+  if (!drive.data?.chatId) throw new Error('Сначала выберите чат для диска');
+
+  const box = $('#driveUploads');
+  box.hidden = false;
+
+  for (const file of files) {
+    const row = uploadRow(file.name);
+    box.prepend(row.el);
+
+    try {
+      const res = await sendOneFile(file, drive.folder, row.progress);
+      if (res.status === 'duplicate') row.done('уже на диске');
+      else if (res.status === 'failed') row.fail(res.error ?? 'не вышло');
+      else row.done('готово');
+    } catch (err) {
+      row.fail(err.message);
+    }
+  }
+
+  await loadDrive();
+  await refresh().catch(() => {});
+  // Прибираем полоски, когда всё закончилось
+  setTimeout(() => {
+    box.innerHTML = '';
+    box.hidden = true;
+  }, 4000);
+}
+
+/**
+ * Один файл — сырым телом запроса. XMLHttpRequest, а не fetch: только он
+ * показывает, сколько байт уже ушло, а без прогресса большой файл выглядит
+ * как зависание.
+ */
+function sendOneFile(file, folder, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/drive/receive');
+    xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+    xhr.setRequestHeader('x-folder', encodeURIComponent(folder || ''));
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      let data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        return reject(new Error('сервер ответил непонятно'));
+      }
+      if (xhr.status >= 400) return reject(new Error(data.error ?? `ошибка ${xhr.status}`));
+      resolve(data);
+    });
+    xhr.addEventListener('error', () => reject(new Error('связь с программой оборвалась')));
+    xhr.send(file);
+  });
+}
+
+function uploadRow(name) {
+  const el = document.createElement('div');
+  el.className = 'upload-row';
+
+  const label = document.createElement('span');
+  label.className = 'upload-name';
+  label.textContent = name;
+
+  const bar = document.createElement('span');
+  bar.className = 'upload-bar';
+  const fill = document.createElement('div');
+  bar.append(fill);
+
+  const stateEl = document.createElement('span');
+  stateEl.className = 'upload-state';
+  stateEl.textContent = 'жду…';
+
+  el.append(label, bar, stateEl);
+
+  return {
+    el,
+    progress: (ratio) => {
+      fill.style.width = `${Math.round(ratio * 100)}%`;
+      stateEl.textContent = ratio >= 1 ? 'отправляю в Telegram…' : `${Math.round(ratio * 100)} %`;
+    },
+    done: (text) => {
+      fill.style.width = '100%';
+      el.classList.add('done');
+      stateEl.textContent = text;
+    },
+    fail: (text) => {
+      el.classList.add('err');
+      stateEl.textContent = text;
+    },
+  };
+}
+
+/* ── папки, поиск, вид ───────────────────────────────────────────────────── */
+
+$('#driveNewFolder').addEventListener('click', (e) => guard(e.target, async () => {
+  const name = await askText({
+    title: 'Новая папка',
+    text: 'Папка на диске — это тема в чате Telegram, её будет видно и там.',
+    placeholder: 'Например, Договоры',
+    okText: 'Создать',
+  });
+  if (!name) return;
+  await api('/api/drive/folder', { name });
+  await loadDrive();
+  toast(`Папка «${name}» создана`);
+}));
+
+let driveTimer = null;
+$('#driveSearch').addEventListener('input', () => {
+  clearTimeout(driveTimer);
+  driveTimer = setTimeout(() => guard(null, async () => {
+    drive.query = $('#driveSearch').value.trim();
+    await loadDrive();
+  }), 300);
+});
+
+$$('#segDriveView input').forEach((i) => i.addEventListener('change', () => guard(null, async () => {
+  drive.view = i.value;
+  await loadDrive();
+})));
+
+$('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive({ append: true })));
+
+/* ── чат диска и загрузка папки целиком ──────────────────────────────────── */
 
 function renderDriveQueue() {
   renderChips($('#driveQueue'), driveQueue.map((p) => ({ id: p, label: p, title: p })), {
@@ -1582,95 +2115,10 @@ function renderDriveQueue() {
   $('#driveUpload').disabled = !driveQueue.length;
 }
 
-async function loadDrive({ append = false } = {}) {
-  const query = $('#driveSearch').value.trim();
-  if (!append) driveOffset = 0;
-
-  const data = await api('/api/drive/search', { query, offset: driveOffset });
-  driveTotal = data.total;
-
-  $('#driveChatText').textContent = data.chatId
-    ? `${data.chatId}${data.separateChat ? ' — отдельный чат, снимки гостям не видны' : ' — тот же чат, что у снимков'}`
-    : 'Чат не выбран — создайте новый или подключите готовый';
-  $('#driveFolders').checked = data.folders;
-  $('#driveWhere').hidden = Boolean(data.chatId);
-
-  $('#driveNumbers').innerHTML = `
-    <div class="stat"><b>${data.files}</b><small>файлов на диске</small></div>
-    <div class="stat"><b>${humanSize(data.bytes)}</b><small>занято в Telegram</small></div>`;
-
-  const box = $('#driveRows');
-  if (!append) box.innerHTML = '';
-  if (!data.rows.length && !append) {
-    box.innerHTML = '<div class="row"><div class="row-label"><b>Диск пуст</b><small>Добавьте папку или файл выше и нажмите «Загрузить»</small></div></div>';
-  }
-  for (const row of data.rows) box.append(driveRow(row));
-
-  driveOffset += data.rows.length;
-  $('#driveMoreRow').hidden = driveOffset >= driveTotal;
-  $('#driveCounter').textContent = `Показано ${Math.min(driveOffset, driveTotal)} из ${driveTotal}`;
-  if (!append) renderDriveQueue();
-}
-
-function driveRow(r) {
-  const row = document.createElement('div');
-  row.className = 'row';
-  row.innerHTML = '<div class="row-label"><b></b><small></small></div>';
-
-  const title = row.querySelector('b');
-  if (r.link) {
-    const a = document.createElement('a');
-    a.href = r.link;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.textContent = r.rel_path || r.name;
-    title.append(a);
-  } else {
-    title.textContent = r.rel_path || r.name;
-  }
-
-  const when = r.sent_at ? new Date(r.sent_at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
-  row.querySelector('small').textContent =
-    `${humanSize(r.size)} · ${when}${r.status !== 'sent' ? ` · ${r.status}` : ''}${r.last_error ? ` · ${r.last_error}` : ''}`;
-
-  const side = document.createElement('div');
-  side.className = 'row-side';
-
-  const get = document.createElement('button');
-  get.className = 'btn btn-small';
-  get.textContent = 'Скачать';
-  get.disabled = r.status !== 'sent';
-  get.addEventListener('click', () => guard(get, async () => {
-    const saved = await api('/api/drive/download', { id: r.id });
-    toast(`Скачано: ${saved.name} → ${saved.path}`);
-  }));
-
-  const del = document.createElement('button');
-  del.className = 'btn btn-small btn-danger';
-  del.textContent = 'Убрать';
-  del.addEventListener('click', () => guard(del, async () => {
-    const ok = await askConfirm({
-      title: `Убрать ${r.name} с диска?`,
-      text: 'Сообщение в Telegram будет удалено, файл на компьютере останется.',
-      icon: '🗑',
-      okText: 'Убрать',
-      danger: true,
-    });
-    if (!ok) return;
-    await api('/api/drive/remove', { id: r.id });
-    await loadDrive();
-    toast('Убрано с диска');
-  }));
-
-  side.append(get, del);
-  row.append(side);
-  return row;
-}
-
 $('#driveAdd').addEventListener('click', () => guard(null, async () => {
   const picked = await askText({
-    title: 'Что положить на диск',
-    text: 'Путь к папке или файлу на этом компьютере. Папку программа обойдёт целиком.',
+    title: 'Какую папку загрузить',
+    text: 'Путь к папке на этом компьютере. Программа обойдёт её целиком, вложенные тоже.',
     placeholder: '/home/me/Документы',
     okText: 'Добавить',
   });
@@ -1680,18 +2128,23 @@ $('#driveAdd').addEventListener('click', () => guard(null, async () => {
 }));
 
 $('#driveUpload').addEventListener('click', (e) => guard(e.target, async () => {
-  await api('/api/drive/upload', { paths: driveQueue });
+  await api('/api/drive/upload', { paths: driveQueue, folder: drive.folder || undefined });
   driveQueue = [];
   renderDriveQueue();
-  toast('Загружаю на диск — смотрите лог на шаге «Проверка и запуск»');
+  toast('Загружаю — ход виден в разделе «Отправка»');
   show('finish');
   startPolling();
 }));
 
 $('#driveFolders').addEventListener('change', () => guard(null, async () => {
   await api('/api/settings', { DRIVE_FOLDERS: String($('#driveFolders').checked) });
-  toast($('#driveFolders').checked ? 'Папки будут темами' : 'Всё одной лентой');
+  toast($('#driveFolders').checked ? 'Папки будут темами в чате' : 'Всё одной лентой');
 }));
+
+$('#driveChangeChat').addEventListener('click', () => {
+  $('#driveWhere').hidden = false;
+  $('#driveWhere').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 $('#driveSameChat').addEventListener('click', (e) => guard(e.target, async () => {
   if (!state?.settings.chatId) throw new Error('Сначала выберите чат для снимков на шаге 4');
@@ -1737,14 +2190,6 @@ $('#driveCreate').addEventListener('click', (e) => guard(e.target, async () => {
   toast(`Диск создан: «${created.title}»`);
   for (const w of created.warnings ?? []) toast(w, true);
 }));
-
-let driveTimer = null;
-$('#driveSearch').addEventListener('input', () => {
-  clearTimeout(driveTimer);
-  driveTimer = setTimeout(() => guard(null, () => loadDrive()), 350);
-});
-
-$('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive({ append: true })));
 
 /* ── доступ: ссылки со сроком и гости ────────────────────────────────────── */
 
@@ -2470,13 +2915,22 @@ $('#doCleanup').addEventListener('click', (e) => guard(e.target, async () => {
 /* ── старт ───────────────────────────────────────────────────────────────── */
 
 $$('#nav .nav-num').forEach((n) => { n.dataset.n = n.textContent; });
+renderAppNav();
 
 refresh()
-  .then(() => {
+  .then(async () => {
     if (state.locked) {
       const me = state.profiles.find((p) => p.active);
       showLock({ name: state.profile, method: me?.lock ?? 'pin', pinLength: me?.pinLength ?? 4, canCode: true, label: me?.displayName });
       return null;
+    }
+    // Не настроенное облако открываем сразу на настройке, готовое — на главной
+    const ready = state.settings.botTokenSet && state.settings.chatId;
+    if (!ready) {
+      openSetup();
+      show('start');
+    } else {
+      await loadHome();
     }
     return api('/api/job').then((j) => { lastJob = j; renderJob(j); }).catch(() => {});
   })

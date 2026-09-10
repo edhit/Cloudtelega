@@ -641,3 +641,123 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
   font-size: 10.5px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ── главный экран: витрина приложений ───────────────────────────────────── */
+
+.pane-wide { max-width: 980px; }
+
+.home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.home-avatar { flex: none; }
+
+.apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 8px 0 26px; }
+.app-tile {
+  display: grid; gap: 10px; align-content: start;
+  padding: 18px; border: 0; border-radius: 16px;
+  background: var(--panel); box-shadow: var(--shadow);
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.app-tile:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+.app-tile .app-icon {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--tint, var(--accent)) 15%, transparent);
+  color: var(--tint, var(--accent));
+}
+.app-tile .app-icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.app-tile b { font-size: 15.5px; font-weight: 600; }
+.app-tile small { display: block; color: var(--text-2); font-size: 13px; line-height: 1.45; }
+.app-tile .app-stat { font-size: 13px; color: var(--tint, var(--accent)); font-weight: 500; }
+.app-tile[data-ready='false'] { opacity: 0.72; }
+
+.note.orange { background: color-mix(in srgb, var(--orange) 13%, transparent); }
+.note.orange b { display: block; margin-bottom: 4px; }
+
+.side-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
+}
+.side-caret { transition: transform 0.15s; }
+.side-toggle[aria-expanded='true'] .side-caret { transform: rotate(90deg); }
+
+/* ── диск как файловый менеджер ──────────────────────────────────────────── */
+
+.drive-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.drive-actions { display: flex; gap: 8px; flex: none; padding-top: 6px; }
+
+.drive-bar { display: flex; align-items: center; gap: 12px; margin: 18px 0 12px; flex-wrap: wrap; }
+.crumbs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 160px; font-size: 14px; }
+.crumbs button {
+  border: 0; background: none; padding: 4px 8px; border-radius: 8px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.crumbs button:hover { background: var(--chip); }
+.crumbs .crumb-sep { color: var(--text-3); }
+.crumbs .crumb-current { font-weight: 600; padding: 4px 8px; }
+
+.drive-search { flex: none; width: min(280px, 42vw); margin: 0; }
+.seg-small span { padding: 5px 10px; font-size: 12.5px; }
+
+/* Зона, куда бросают файлы: рамка появляется только во время перетаскивания */
+.dropzone { position: relative; border-radius: var(--radius); min-height: 180px; }
+.dropzone.over { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.drop-hint {
+  position: absolute; inset: 0; z-index: 3; display: none; place-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  border-radius: var(--radius); font-size: 16px; color: var(--accent);
+}
+.dropzone.over .drop-hint { display: grid; }
+
+.files { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.file-card {
+  position: relative; display: grid; gap: 8px; place-items: center; align-content: start;
+  padding: 16px 10px 12px; border-radius: 12px; background: var(--panel);
+  box-shadow: var(--shadow); color: inherit; text-decoration: none; cursor: pointer;
+}
+.file-card:hover { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.file-icon { font-size: 30px; line-height: 1; }
+.file-name {
+  font-size: 12.5px; text-align: center; width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.file-sub { font-size: 11px; color: var(--text-3); }
+.file-card .file-menu {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-3);
+  cursor: pointer; font-size: 15px; line-height: 1; display: none;
+}
+.file-card:hover .file-menu { display: block; }
+.file-card .file-menu:hover { background: var(--chip); color: var(--text); }
+.file-card.folder .file-icon { color: var(--accent); }
+
+.files-empty { padding: 40px 20px; text-align: center; color: var(--text-3); }
+.files-empty b { display: block; font-size: 15px; color: var(--text-2); margin-bottom: 4px; }
+
+/* Тот же список, но строками */
+.files-list { display: grid; gap: 2px; }
+.file-row {
+  display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+  border-radius: 10px; background: var(--panel); color: inherit; text-decoration: none; cursor: pointer;
+}
+.file-row:hover { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.file-row .file-icon { font-size: 20px; }
+.file-row .file-name { flex: 1; text-align: left; font-size: 14px; }
+.file-row .file-sub { flex: none; }
+
+/* Прогресс загрузки перетащенного */
+.uploads { display: grid; gap: 6px; margin-top: 14px; }
+.upload-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+  border-radius: 10px; background: var(--panel); font-size: 13px;
+}
+.upload-row .upload-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-row .upload-state { flex: none; color: var(--text-2); font-size: 12.5px; }
+.upload-row.done .upload-state { color: var(--green); }
+.upload-row.err .upload-state { color: var(--red); }
+.upload-bar { flex: none; width: 90px; height: 5px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.upload-bar > div { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+.drive-extra { margin-top: 22px; padding: 0; }
+.drive-extra summary { padding: 14px 18px; cursor: pointer; font-size: 14px; }
+.drive-extra-body { padding: 0 18px 18px; }

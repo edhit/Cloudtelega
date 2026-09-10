@@ -15,7 +15,10 @@ import path from 'node:path';
 import { config } from './config.js';
 import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
-import { driveStats, fileById, findByHash, markFailed, markSent, upsertPending } from './db.js';
+import {
+  driveRootCount, driveStats, fileById, findByHash, listDriveFolders,
+  markFailed, markSent, setFileFolder, upsertPending,
+} from './db.js';
 import { sha256Cached } from './hash.js';
 import { extOf, kindOf, mimeOf } from './media.js';
 import { normalizeStem } from './naming.js';
@@ -49,6 +52,48 @@ export function driveOverview() {
   };
 }
 
+/* ── папки ───────────────────────────────────────────────────────────────── */
+
+// Папка диска — это тема в чате. Имя темы Telegram ограничивает 128 символами,
+// а из имени убираем то, что ломает навигацию.
+export function cleanFolderName(raw) {
+  const name = String(raw ?? '')
+    .replace(/[\\/\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 96);
+  if (!name) throw new Error('Пустое имя папки');
+  if (name === '.' || name === '..') throw new Error('Так папку назвать нельзя');
+  return name;
+}
+
+/** Список папок с числом файлов; корень идёт первым. */
+export function folders() {
+  const chatId = driveChatId();
+  return {
+    root: { name: '', title: 'Все файлы', n: driveRootCount(BUCKET) },
+    list: listDriveFolders(chatId, BUCKET),
+  };
+}
+
+/** Создаёт папку: заводит тему в чате, чтобы она была видна и в Telegram. */
+export async function createFolder(raw) {
+  const name = cleanFolderName(raw);
+  const chatId = driveChatId();
+  if (!chatId) throw new Error('Не выбран чат для диска');
+  if (!config.driveFolders) throw new Error('Папки выключены — включите «Папки — темами» на панели диска');
+
+  const topicId = await resolveTopic(name, chatId);
+  log.ok(`Папка «${name}» готова (тема ${topicId})`);
+  return { name, topicId };
+}
+
+/** Переложить файл в другую папку. */
+export function moveFile(id, folder) {
+  const name = folder ? cleanFolderName(folder) : null;
+  return setFileFolder(id, name);
+}
+
 /** Имя темы для файла: верхняя папка относительно корня, иначе «Разное». */
 function folderOf(absPath, root) {
   if (!root) return null;
@@ -70,7 +115,7 @@ function driveCaption(file, folder) {
  * @param {{root?:string, folder?:string, onProgress?:Function}} opts
  * @returns {Promise<{status:'sent'|'duplicate'|'failed', file:object, error?:string, link?:string}>}
  */
-export async function putFile(absPath, { root, folder } = {}) {
+export async function putFile(absPath, { root, folder, displayName } = {}) {
   const chatId = driveChatId();
   if (!chatId) throw new Error('Не выбран чат для диска');
 
@@ -84,9 +129,10 @@ export async function putFile(absPath, { root, folder } = {}) {
     return { status: 'failed', file: { name: path.basename(absPath), absPath }, error: 'это не файл' };
   }
 
-  const name = path.basename(absPath);
+  const name = displayName || path.basename(absPath);
   const record = {
-    absPath,
+    // У перетащенного файла пути на компьютере нет — запоминать нечего
+    absPath: displayName ? null : absPath,
     relPath: root ? path.relative(root, absPath) : name,
     name,
     size: stat.size,
@@ -117,7 +163,9 @@ export async function putFile(absPath, { root, folder } = {}) {
 
   try {
     const folderName = folder ?? (config.driveFolders ? folderOf(absPath, root) : null);
-    const topicId = folderName ? await resolveTopic(folderName, chatId) : null;
+    const topicId = folderName && config.driveFolders ? await resolveTopic(folderName, chatId) : null;
+    record.folder = folderName ?? null;
+    upsertPending(record);
 
     const job = {
       filePath: absPath,
@@ -157,6 +205,23 @@ export async function putFile(absPath, { root, folder } = {}) {
     const why = describeError(err, { kind: err.method ? 'bot' : 'mtproto' });
     markFailed(sha256, why);
     return { status: 'failed', file: record, error: why };
+  }
+}
+
+/**
+ * Кладёт на диск файл, который браузер прислал байтами (перетаскивание).
+ * Файл уже сохранён во временный, откуда его и отправляем — так работает
+ * и гигабайтный архив: он не держится целиком в памяти.
+ * @param {{tmpPath:string, name:string, folder?:string|null}} opts
+ */
+export async function putUploaded({ tmpPath, name, folder = null }) {
+  const safeName = String(name || path.basename(tmpPath)).replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 200);
+  const folderName = folder ? cleanFolderName(folder) : null;
+
+  try {
+    return await putFile(tmpPath, { folder: folderName, displayName: safeName });
+  } finally {
+    await fs.rm(tmpPath, { force: true }).catch(() => {});
   }
 }
 

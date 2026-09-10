@@ -8,14 +8,20 @@ import { fileURLToPath } from 'node:url';
 import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../config.js';
 import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
-import { closeDb, countFiles, fileIdCoverage, listFiles, listTopics, searchFiles, sqliteDriver, stats } from '../db.js';
+import {
+  closeDb, countFiles, fileIdCoverage, listFiles, listGuests, listTopics,
+  searchFiles, sqliteDriver, stats,
+} from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
 import { log, humanSize, onLog } from '../logger.js';
 import { buildCaption } from '../caption.js';
 import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline.js';
 import { summarizeUnreadable } from '../scanner.js';
-import { driveOverview, getFileBack, putMany, removeFromDrive } from '../drive.js';
+import {
+  createFolder, driveOverview, folders as driveFolders, getFileBack, moveFile,
+  putMany, putUploaded, removeFromDrive,
+} from '../drive.js';
 import {
   accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
   removeGuest, revokeAccessLink,
@@ -263,16 +269,60 @@ async function startSend() {
     });
 }
 
+/**
+ * Приём файла, перетащенного в браузер. Тело запроса — сами байты, имя и папка
+ * приходят заголовками: так не нужен разбор multipart, а файл льётся на диск
+ * потоком и не держится в памяти целиком.
+ */
+async function receiveUpload(req, res, url) {
+  if (!profileUnlocked(config.profile)) {
+    res.writeHead(423, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'Профиль закрыт' }));
+    return;
+  }
+
+  const name = decodeURIComponent(req.headers['x-file-name'] ?? url.searchParams.get('name') ?? 'файл');
+  const folder = decodeURIComponent(req.headers['x-folder'] ?? url.searchParams.get('folder') ?? '');
+
+  await fs.mkdir(config.tmpDir, { recursive: true });
+  const tmpPath = path.join(config.tmpDir, `upload-${crypto.randomBytes(8).toString('hex')}`);
+
+  try {
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
+    await pipeline(req, createWriteStream(tmpPath));
+
+    const outcome = await putUploaded({ tmpPath, name, folder: folder || null });
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      status: outcome.status,
+      name: outcome.file?.name ?? name,
+      size: outcome.file?.size ?? 0,
+      link: outcome.link ?? null,
+      error: outcome.error ?? null,
+    }));
+  } catch (err) {
+    await fs.rm(tmpPath, { force: true }).catch(() => {});
+    const message = describeError(err);
+    log.error(`Загрузка ${name}: ${message}`);
+    res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ status: 'failed', name, error: message }));
+  }
+}
+
 /** Страница диска: сводка плюс порция записей со ссылками на сообщения. */
-function drivePage({ query = '', status = '', offset = 0 } = {}) {
+function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) {
+  // При поиске папку не сужаем: искать логично по всему диску
+  const inFolder = String(query ?? '').trim() ? null : folder;
   const page = searchFiles({
     bucket: 'drive',
     query: String(query ?? ''),
     status: String(status ?? ''),
     limit: 100,
     offset: Number(offset) || 0,
+    folder: inFolder,
   });
-  return { ...driveOverview(), ...page, rows: withLinks(page.rows) };
+  return { ...driveOverview(), ...driveFolders(), ...page, folder: inFolder, rows: withLinks(page.rows) };
 }
 
 /** Загрузка на диск — та же фоновая работа, что скан и отправка. */
@@ -736,6 +786,18 @@ const routes = {
 
   /* ── диск ───────────────────────────────────────────────────────────── */
 
+  /** Одним запросом всё, что нужно главному экрану. */
+  'GET /api/home': async () => {
+    const db = stats();
+    const drive = driveOverview();
+    const guests = listGuests({ chatId: drive.chatId }).filter((g) => !g.removed_at);
+    return {
+      photos: db.total ?? { n: 0, bytes: 0 },
+      drive: { files: drive.files, bytes: drive.bytes, chatId: drive.chatId },
+      access: { guests: guests.length },
+    };
+  },
+
   'GET /api/drive': async () => drivePage({}),
 
   'POST /api/drive/search': async (body) => drivePage(body ?? {}),
@@ -752,6 +814,18 @@ const routes = {
   },
 
   'POST /api/drive/remove': async (body) => removeFromDrive(Number(body?.id)),
+
+  'GET /api/drive/folders': async () => driveFolders(),
+
+  'POST /api/drive/folder': async (body) => {
+    const created = await createFolder(body?.name);
+    return { created, ...driveFolders() };
+  },
+
+  'POST /api/drive/move': async (body) => {
+    moveFile(Number(body?.id), body?.folder ?? null);
+    return drivePage({ folder: body?.from ?? null });
+  },
 
   /* ── доступ к диску ─────────────────────────────────────────────────── */
 
@@ -1263,6 +1337,11 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
     }
     if (req.method === 'GET' && url.pathname === '/api/wallpaper') {
       await serveWallpaper(req, res, url);
+      return;
+    }
+    // Загрузку читаем потоком, поэтому она идёт мимо общего разбора тела
+    if (req.method === 'POST' && url.pathname === '/api/drive/receive') {
+      await receiveUpload(req, res, url);
       return;
     }
 

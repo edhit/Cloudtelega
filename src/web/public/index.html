@@ -13,7 +13,7 @@
       <div class="brand-icon">☁️</div>
       <div>
         <div class="brand-title">Cloudtelega</div>
-        <div class="brand-sub">Настройка хранилища</div>
+        <div class="brand-sub">Ваше облако в Telegram</div>
       </div>
     </div>
     <div class="accounts">
@@ -24,8 +24,15 @@
         <span class="account-text"><b>Добавить профиль</b></span>
       </button>
     </div>
-    <div class="side-title">Настройка отправки</div>
-    <ul class="nav" id="nav">
+    <div class="side-title">Приложения</div>
+    <ul class="nav nav-plain" id="navApps"></ul>
+
+    <div class="side-title">
+      <button class="side-toggle" id="setupToggle" aria-expanded="false">
+        <span>Настройка</span><span class="side-caret">▸</span>
+      </button>
+    </div>
+    <ul class="nav" id="nav" hidden>
       <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
       <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
       <li><button data-pane="account"><span class="nav-num" data-num>3</span><span class="nav-label">Ваш аккаунт</span></button></li>
@@ -49,40 +56,6 @@
         </button>
       </li>
       <li>
-        <button data-pane="drive">
-          <!-- облако: файловый диск -->
-          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
-            <path d="M6.6 17.4a3.9 3.9 0 0 1-.4-7.8 4.9 4.9 0 0 1 9.4-1.2 3.5 3.5 0 0 1 .3 7 3.6 3.6 0 0 1-.4 0H6.6Z"/>
-            <path d="M11 14.4V9.6"/>
-            <path d="m8.9 11.5 2.1-2 2.1 2"/>
-          </svg>
-          <span class="nav-label">Диск</span>
-        </button>
-      </li>
-      <li>
-        <button data-pane="access">
-          <!-- два человека: кому открыт доступ -->
-          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
-            <circle cx="8.6" cy="8" r="2.7"/>
-            <path d="M3.6 17.4a5 5 0 0 1 10 0"/>
-            <path d="M14.6 5.6a2.7 2.7 0 0 1 0 5.2"/>
-            <path d="M16.2 13.2a5 5 0 0 1 2.2 4.2"/>
-          </svg>
-          <span class="nav-label">Кому открыт доступ</span>
-        </button>
-      </li>
-      <li>
-        <button data-pane="archive">
-          <!-- архивная коробка с прорезью-ручкой -->
-          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
-            <rect x="3" y="4.2" width="16" height="4" rx="1.3"/>
-            <path d="M4.6 8.2h12.8v8.3a1.3 1.3 0 0 1-1.3 1.3H5.9a1.3 1.3 0 0 1-1.3-1.3V8.2Z"/>
-            <path d="M9.1 11.6h3.8"/>
-          </svg>
-          <span class="nav-label">База отправленного</span>
-        </button>
-      </li>
-      <li>
         <button class="nav-lock" id="lockNow">
           <!-- закрытый замок -->
           <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
@@ -102,8 +75,30 @@
 
   <main class="content">
 
+    <!-- ── Главный экран: витрина приложений ─────────────────────────── -->
+    <section class="pane active" id="pane-home">
+      <div class="home-head">
+        <div>
+          <h1 id="homeTitle">Cloudtelega</h1>
+          <p class="lead" id="homeLead">Ваше облако в Telegram: снимки, файлы и доступ для тех, кому вы его дали.</p>
+        </div>
+        <div class="home-avatar profile-avatar big" id="homeAvatar"></div>
+      </div>
+
+      <div class="note orange" id="homeSetup" hidden>
+        <b>Не всё настроено</b>
+        <span id="homeSetupText"></span>
+        <div class="btn-row"><button class="btn btn-primary" id="homeSetupGo">Продолжить настройку</button></div>
+      </div>
+
+      <div class="apps" id="appTiles"></div>
+
+      <div class="group-title">Хранилище</div>
+      <div class="grid2" id="homeNumbers"></div>
+    </section>
+
     <!-- ── 1. Начало ─────────────────────────────────────────────────── -->
-    <section class="pane active" id="pane-start">
+    <section class="pane" id="pane-start">
       <h1>Личное облако для фото и видео</h1>
       <p class="lead">Программа находит на диске или на телефоне — iPhone или Android — все фото и видео и складывает их в вашу приватную группу в Telegram. Место не ограничено, платить не нужно. Настройка занимает минут десять — я проведу вас по шагам.</p>
 
@@ -550,56 +545,75 @@
     </section>
 
     <!-- ── Диск ──────────────────────────────────────────────────────── -->
-    <section class="pane" id="pane-drive">
-      <h1>Диск</h1>
-      <p class="lead">Здесь лежат любые файлы — документы, архивы, музыка, проекты. Оригиналы, без пережатия: Telegram хранит их как есть, а программа помнит, что и куда положено, чтобы не загружать одно и то же дважды.</p>
-
-      <div class="note blue" id="driveWhere">
-        <b>Куда складывать диск.</b> Лучше в <b>отдельную приватную супергруппу с темами</b>:
-        темы работают как папки, а к диску вы будете давать доступ посторонним — в общем чате
-        им были бы видны и ваши снимки.
+    <section class="pane pane-wide" id="pane-drive">
+      <div class="drive-head">
+        <div>
+          <h1>Диск</h1>
+          <p class="lead">Перетащите файлы прямо сюда. Любые: документы, архивы, музыка, видео — Telegram хранит их оригиналом.</p>
+        </div>
+        <div class="drive-actions">
+          <button class="btn" id="driveNewFolder">Новая папка</button>
+          <button class="btn btn-primary" id="drivePickFiles">Загрузить файлы</button>
+          <input type="file" id="driveFileInput" multiple hidden>
+        </div>
       </div>
 
-      <div class="group-title">Чат для диска</div>
-      <div class="group">
-        <div class="row">
-          <div class="row-label"><b>Где хранится</b><small id="driveChatText">—</small></div>
-          <div class="row-side">
-            <button class="btn" id="driveCreate">Создать за меня</button>
-            <button class="btn" id="drivePick">Выбрать готовый</button>
-          </div>
-        </div>
-        <div class="row">
-          <div class="row-label"><b>Папки — темами</b><small>Верхняя папка на компьютере становится темой в чате</small></div>
-          <label class="switch"><input type="checkbox" id="driveFolders" checked><span></span></label>
-        </div>
-        <div class="row">
-          <div class="row-label"><b>Использовать чат архива</b><small>Если диск и снимки не жалко держать вместе</small></div>
+      <div class="note blue" id="driveWhere" hidden>
+        <b>Сначала выберите чат для диска.</b> Лучше отдельную приватную супергруппу с темами:
+        темы работают как папки, а к диску вы будете давать доступ посторонним — в общем чате
+        им были бы видны и ваши снимки.
+        <div class="btn-row">
+          <button class="btn btn-primary" id="driveCreate">Создать за меня</button>
+          <button class="btn" id="drivePick">Выбрать готовый</button>
           <button class="btn" id="driveSameChat">Взять чат снимков</button>
         </div>
       </div>
 
-      <div class="group-title">Положить на диск</div>
-      <div class="group" style="padding: 14px 16px">
-        <div class="pathlist" id="driveQueue"></div>
-        <div class="btn-row">
-          <button class="btn" id="driveAdd">Добавить папку или файл…</button>
-          <button class="btn btn-primary" id="driveUpload">Загрузить</button>
+      <div class="drive-bar">
+        <nav class="crumbs" id="driveCrumbs"></nav>
+        <input type="search" id="driveSearch" class="drive-search" placeholder="Поиск по диску" autocomplete="off">
+        <div class="seg seg-small" id="segDriveView">
+          <label><input type="radio" name="driveview" value="grid" checked><span>Плиткой</span></label>
+          <label><input type="radio" name="driveview" value="list"><span>Списком</span></label>
         </div>
-        <p class="hint">Папку программа обойдёт целиком, вложенные папки тоже.</p>
       </div>
 
-      <div class="grid2" id="driveNumbers"></div>
-
-      <div class="group-title">Что на диске</div>
-      <div class="group" style="padding: 14px 16px">
-        <input type="text" id="driveSearch" placeholder="Имя файла или папка" autocomplete="off">
-        <p class="hint">Нажмите на файл — откроется сообщение в Telegram. «Скачать» вернёт его на компьютер.</p>
+      <div class="dropzone" id="driveDrop">
+        <div class="drop-hint" id="driveDropHint"><b>Отпустите — загружу на диск</b></div>
+        <div id="driveBody"></div>
       </div>
-      <div class="group" id="driveRows"></div>
+
       <div class="btn-row" id="driveMoreRow" hidden>
         <button class="btn" id="driveMore">Показать ещё 100</button>
         <span class="hint" style="margin:0" id="driveCounter"></span>
+      </div>
+
+      <div class="uploads" id="driveUploads" hidden></div>
+
+      <details class="group drive-extra">
+        <summary>Загрузить папку с компьютера целиком</summary>
+        <div class="drive-extra-body">
+          <p class="hint" style="margin-top:0">Перетаскивание берёт отдельные файлы. Если нужно залить большую папку со всеми вложенными — укажите путь к ней здесь.</p>
+          <div class="pathlist" id="driveQueue"></div>
+          <div class="btn-row">
+            <button class="btn" id="driveAdd">Указать папку…</button>
+            <button class="btn btn-primary" id="driveUpload">Загрузить папку</button>
+          </div>
+        </div>
+      </details>
+
+      <div class="group-title">Где хранится</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label"><b>Чат диска</b><small id="driveChatText">—</small></div>
+          <div class="row-side">
+            <button class="btn btn-small" id="driveChangeChat">Сменить</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Папки — темами в чате</b><small>Папка на диске видна в Telegram как отдельная тема</small></div>
+          <label class="switch"><input type="checkbox" id="driveFolders" checked><span></span></label>
+        </div>
       </div>
     </section>
 
