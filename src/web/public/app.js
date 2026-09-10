@@ -32,7 +32,22 @@ function closeModal(value) {
 }
 
 /**
+ * Значки для окон. Рисуем контуром — тем же языком, что и остальные значки
+ * программы, чтобы окно не выбивалось эмодзи из общего вида.
+ */
+const MODAL_ICONS = {
+  warning: { tint: '#ff9500', art: '<path d="M11 4.4 19.2 18H2.8L11 4.4Z"/><path d="M11 9.4v3.8"/><circle cx="11" cy="15.6" r="0.9" fill="currentColor" stroke="none"/>' },
+  trash: { tint: '#ff3b30', art: '<path d="M4.6 6.4h12.8"/><path d="M8.6 6.4V4.8h4.8v1.6"/><path d="M6.2 6.4l.8 10.2a1.6 1.6 0 0 0 1.6 1.4h4.8a1.6 1.6 0 0 0 1.6-1.4l.8-10.2"/><path d="M9.4 9.6v5.2"/><path d="M12.6 9.6v5.2"/>' },
+  unplug: { tint: '#ff9500', art: '<path d="M11 3.4v7.2"/><path d="M6.4 6.4a6.2 6.2 0 1 0 9.2 0"/>' },
+  door: { tint: '#ff3b30', art: '<path d="M12.6 4.4H6.2a1.6 1.6 0 0 0-1.6 1.6v10a1.6 1.6 0 0 0 1.6 1.6h6.4"/><path d="M15.4 8.2 18.6 11l-3.2 2.8"/><path d="M18.2 11h-7.4"/>' },
+  // «убрать лишние видео» — кадр с крестиком понятнее метлы
+  videoX: { tint: '#5856d6', art: '<rect x="2.8" y="5.2" width="16.4" height="11.6" rx="2.6"/><path d="m8.6 9.2 4.8 4.8M13.4 9.2l-4.8 4.8"/>' },
+  key: { tint: '#007aff', art: '<circle cx="8" cy="11" r="3.4"/><path d="M11.4 11h6.2"/><path d="M15.6 11v2.8"/><path d="M17.6 11v2"/>' },
+};
+
+/**
  * Одно окно на все случаи: подтверждение, ввод текста, ввод кода.
+ * `icon` — имя из MODAL_ICONS.
  * @returns {Promise<any|null>} null — если отменили
  */
 function openModal({ title, text = '', icon = null, okText = 'Готово', cancelText = 'Отмена', danger = false, build, collect }) {
@@ -42,8 +57,10 @@ function openModal({ title, text = '', icon = null, okText = 'Готово', can
     $('#modalTitle').textContent = title;
     $('#modalText').textContent = text;
     $('#modalText').hidden = !text;
-    $('#modalIcon').textContent = icon ?? '';
-    $('#modalIcon').hidden = !icon;
+    const art = icon ? MODAL_ICONS[icon] : null;
+    $('#modalIcon').innerHTML = art ? `<svg viewBox="0 0 22 22" aria-hidden="true">${art.art}</svg>` : '';
+    $('#modalIcon').style.setProperty('--tint', art?.tint ?? '#8e8e93');
+    $('#modalIcon').hidden = !art;
     $('#modalOk').textContent = okText;
     $('#modalOk').className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
     $('#modalOk').hidden = !okText;
@@ -194,7 +211,7 @@ function askDangerous({ title, text, confirmWord, okText = 'Удалить' }) {
   return openModal({
     title,
     text,
-    icon: '⚠️',
+    icon: 'warning',
     okText,
     danger: true,
     build: (body, { setValid }) => {
@@ -212,6 +229,16 @@ function askDangerous({ title, text, confirmWord, okText = 'Удалить' }) {
     },
     collect: () => (input.value.trim() === confirmWord ? confirmWord : null),
   });
+}
+
+/** Маленький замок в подписи профиля — вместо эмодзи. */
+function lockGlyph(locked) {
+  const el = document.createElement('span');
+  el.className = `lock-mark${locked ? ' shut' : ''}`;
+  el.innerHTML = locked
+    ? '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.8"/><path d="M5.6 7V5.4a2.4 2.4 0 0 1 4.8 0V7"/></svg>'
+    : '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.8"/><path d="M10.4 7V5.4a2.4 2.4 0 0 0-4.8 0"/></svg>';
+  return el;
 }
 
 let toastTimer = null;
@@ -296,7 +323,17 @@ function markDone(pane, done) {
   const num = $(`#nav button[data-pane="${pane}"] .nav-num`);
   if (!num) return;
   num.classList.toggle('done', done);
-  num.textContent = done ? '✓' : num.dataset.n ?? num.textContent;
+  if (done) num.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8.4 2.7 2.7L12 5.6"/></svg>';
+  else num.textContent = num.dataset.n ?? num.textContent;
+}
+
+/** Правильное окончание: 1 файл, 2 файла, 5 файлов. */
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
 
 /* ── приложения сервиса ──────────────────────────────────────────────────── */
@@ -519,7 +556,13 @@ function pickFromList({ title, text, items, empty }) {
 
       for (const item of items) {
         const btn = document.createElement('button');
-        const avatar = makeAvatar({ key: item.id ?? item.label, letter: item.label, photo: item.photo });
+        // «Создать новую группу» — не чат, буква в кружке для него бессмысленна
+        const avatar = item.art
+          ? Object.assign(document.createElement('span'), {
+            className: 'picker-glyph',
+            innerHTML: `<svg viewBox="0 0 22 22" aria-hidden="true">${item.art}</svg>`,
+          })
+          : makeAvatar({ key: item.id ?? item.label, letter: item.label, photo: item.photo });
 
         const wrap = document.createElement('span');
         const b = document.createElement('b');
@@ -587,11 +630,12 @@ function renderProfiles() {
     title.textContent = label;
     const sub = document.createElement('small');
     const marks = [];
-    if (p.lock !== 'none') marks.push(p.locked ? '🔒 закрыт' : '🔓 открыт');
+    if (p.lock !== 'none') marks.push(p.locked ? 'закрыт' : 'открыт');
     if (!p.configured) marks.push('не настроен');
     else if (p.lastLoginAt) marks.push(`вход ${timeAgo(p.lastLoginAt)}`);
     else marks.push('настроен');
-    sub.textContent = marks.join(' · ');
+    if (p.lock !== 'none') sub.append(lockGlyph(p.locked));
+    sub.append(marks.join(' · '));
     text.append(title, sub);
 
     btn.append(avatar, text);
@@ -1268,7 +1312,13 @@ async function renderPreview() {
   if (sample.parseMode === 'HTML') box.innerHTML = sample.text;
   else box.textContent = sample.text;
 
-  $('.bubble-photo').textContent = kind === 'video' ? '🎬' : kind === 'live' ? '🌀' : '🏔';
+  // Значок в пузыре — тот же язык контурных иконок, что и на диске
+  const BUBBLE_ART = {
+    video: '<circle cx="12" cy="12" r="7.4"/><path d="M10.2 8.8v6.4l5-3.2z"/>',
+    live: '<circle cx="12" cy="12" r="3.4"/><path d="M12 7.4a4.6 4.6 0 0 1 0 9.2" stroke-dasharray="1.8 2.6"/><path d="M12 4.2a7.8 7.8 0 0 1 0 15.6" stroke-dasharray="1.8 3.4"/>',
+    photo: '<path d="M4.6 17.6 9.4 12a2 2 0 0 1 3 0l2.2 2.6"/><path d="m13.4 14.2 1.6-1.8a2 2 0 0 1 3 0l2.4 2.8"/><circle cx="8.4" cy="8.2" r="1.7"/>',
+  };
+  $('#bubblePhoto').innerHTML = `<svg viewBox="0 0 24 24">${BUBBLE_ART[kind] ?? BUBBLE_ART.photo}</svg>`;
 }
 
 $$('#segCaption input, #segPreviewKind input').forEach((i) => i.addEventListener('change', renderPreview));
@@ -1336,7 +1386,7 @@ function renderWallpapers(current = { type: 'none' }) {
 
   const none = document.createElement('button');
   none.className = 'wall none';
-  none.textContent = '✕';
+  none.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6"/></svg>';
   none.title = 'Без фона';
   none.setAttribute('aria-pressed', String(current.type === 'none'));
   none.addEventListener('click', () => guard(null, () => setWallpaper({ type: 'none' })));
@@ -1690,7 +1740,7 @@ $('#logoutTelegram').addEventListener('click', (e) => guard(e.target, async () =
   const ok = await askConfirm({
     title: 'Отключить аккаунт Telegram?',
     text: 'Программа забудет ключ от аккаунта: файлы больше 50 МБ отправляться перестанут, пока не войдёте снова. Архив, настройки и сам аккаунт останутся целыми.',
-    icon: '🔌',
+    icon: 'unplug',
     okText: 'Отключить',
     danger: true,
   });
@@ -1719,20 +1769,96 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
 const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null };
 let driveQueue = [];
 
-const FILE_ICONS = [
-  [/\.(jpe?g|png|gif|webp|heic|heif|avif|bmp|tiff?)$/i, '🖼'],
-  [/\.(mp4|mov|mkv|avi|webm|m4v|mpe?g|3gp)$/i, '🎬'],
-  [/\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i, '🎵'],
-  [/\.(zip|rar|7z|tar|gz|bz2|xz)$/i, '🗜'],
-  [/\.pdf$/i, '📕'],
-  [/\.(docx?|odt|rtf|pages)$/i, '📄'],
-  [/\.(xlsx?|csv|ods|numbers)$/i, '📊'],
-  [/\.(pptx?|odp|key)$/i, '📽'],
-  [/\.(txt|md|log)$/i, '📝'],
-  [/\.(js|ts|json|html|css|py|sh|java|go|rs|c|cpp)$/i, '⌨️'],
+/**
+ * Значки типов файлов — рисованные, а не эмодзи: эмодзи в каждой системе свои
+ * и рядом друг с другом смотрятся вразнобой.
+ * У каждого типа свой цвет, как в Finder.
+ */
+const FILE_KINDS = [
+  {
+    test: /\.(jpe?g|png|gif|webp|heic|heif|avif|bmp|tiff?|svg)$/i,
+    tint: '#34c759',
+    art: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><circle cx="8.6" cy="10" r="1.6"/><path d="m4.4 17.2 4.4-4.2a1.8 1.8 0 0 1 2.5 0l3 2.9"/><path d="m14.2 14.6 1.6-1.5a1.8 1.8 0 0 1 2.5 0l1.9 1.8"/>',
+  },
+  {
+    test: /\.(mp4|mov|mkv|avi|webm|m4v|mpe?g|3gp|hevc|wmv|mts)$/i,
+    tint: '#5856d6',
+    art: '<rect x="3" y="5.5" width="18" height="13" rx="3"/><path d="M10 9.6v4.8l4.2-2.4z"/>',
+  },
+  {
+    test: /\.(mp3|wav|flac|ogg|m4a|aac|opus|aiff?)$/i,
+    tint: '#ff2d55',
+    art: '<path d="M9.4 16.4V6.6l8-1.6v9.6"/><circle cx="7.2" cy="16.8" r="2.2"/><circle cx="15.2" cy="14.8" r="2.2"/>',
+  },
+  {
+    test: /\.(zip|rar|7z|tar|gz|bz2|xz|tgz)$/i,
+    tint: '#ff9500',
+    art: '<path d="M5.5 4.5h13a1.5 1.5 0 0 1 1.5 1.5v12a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18V6a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="M11 4.5v2m2 0v2m-2 2v2m2 0v2"/><rect x="10.2" y="14.5" width="3.6" height="3.4" rx="1"/>',
+  },
+  {
+    test: /\.pdf$/i,
+    tint: '#ff3b30',
+    art: '<path d="M6.5 3.5h7L18 8v11.5a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.2 3.6V8H18"/><path d="M8.6 16.4c2.4-1 4-3.4 4-5.4 0-.8-.4-1.2-.9-1.2-.6 0-1 .6-.8 1.7.4 2.2 2.2 4.2 4.4 4.6"/>',
+  },
+  {
+    test: /\.(docx?|odt|rtf|pages)$/i,
+    tint: '#007aff',
+    art: '<path d="M6.5 3.5h7L18 8v11.5a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.2 3.6V8H18"/><path d="M8.4 12h7M8.4 15h7M8.4 18h4"/>',
+  },
+  {
+    test: /\.(xlsx?|csv|tsv|ods|numbers)$/i,
+    tint: '#34c759',
+    art: '<rect x="4" y="4.5" width="16" height="15" rx="2"/><path d="M4 9.4h16M4 14.4h16M9.6 9.4v10.1M14.4 9.4v10.1"/>',
+  },
+  {
+    test: /\.(pptx?|odp|key)$/i,
+    tint: '#ff9500',
+    art: '<rect x="3.5" y="4.5" width="17" height="11" rx="2"/><path d="M12 15.5v3.4M8.6 19h6.8"/><path d="M7.6 12.4V9m3.4 3.4V7.6m3.4 4.8v-2.2"/>',
+  },
+  {
+    test: /\.(txt|md|log|rtf)$/i,
+    tint: '#8e8e93',
+    art: '<path d="M6.5 3.5h7L18 8v11.5a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.2 3.6V8H18"/><path d="M8.4 12.4h7M8.4 15.4h7M8.4 18.2h3.6"/>',
+  },
+  {
+    test: /\.(js|mjs|ts|tsx|jsx|json|html|css|py|sh|java|go|rs|c|cpp|rb|php|yml|yaml|xml)$/i,
+    tint: '#5ac8fa',
+    art: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9.4 10.4-2.2 1.8 2.2 1.8M14.6 10.4l2.2 1.8-2.2 1.8M12.8 9.4l-1.6 5.6"/>',
+  },
 ];
 
-const fileIcon = (name) => FILE_ICONS.find(([re]) => re.test(name))?.[1] ?? '📦';
+const GENERIC_FILE = {
+  tint: '#8e8e93',
+  art: '<path d="M6.5 3.5h7L18 8v11.5a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.2 3.6V8H18"/>',
+};
+
+const FOLDER_ART = '<path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/>';
+
+// Telegram знает вид файла и без расширения — этим и пользуемся, когда имя
+// ничего не подсказывает. Live Photo рисуем отдельно: это не просто снимок.
+const KIND_ART = {
+  photo: () => FILE_KINDS[0],
+  video: () => FILE_KINDS[1],
+  audio: () => FILE_KINDS[2],
+  voice: () => FILE_KINDS[2],
+  live_photo: () => ({
+    tint: '#34c759',
+    art: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M12 8.2a3.8 3.8 0 0 1 0 7.6" stroke-dasharray="1.6 2.4"/>',
+  }),
+};
+
+/** <svg> с обводкой по типу файла; цвет задаётся переменной --tint. */
+function fileGlyph(name, { folder = false, kind = null } = {}) {
+  const art = folder
+    ? { tint: '#007aff', art: FOLDER_ART }
+    : FILE_KINDS.find((k) => k.test.test(name)) ?? KIND_ART[kind]?.() ?? GENERIC_FILE;
+
+  const el = document.createElement('span');
+  el.className = 'glyph';
+  el.style.setProperty('--tint', art.tint);
+  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${art.art}</svg>`;
+  return el;
+}
 
 async function loadDrive({ append = false } = {}) {
   if (!append) drive.offset = 0;
@@ -1746,9 +1872,7 @@ async function loadDrive({ append = false } = {}) {
   drive.total = data.total;
 
   $('#driveWhere').hidden = Boolean(data.chatId);
-  $('#driveChatText').textContent = data.chatId
-    ? `${data.chatId}${data.separateChat ? ' — отдельный чат, снимки гостям не видны' : ' — тот же чат, что у снимков'}`
-    : 'не выбран';
+  renderDriveChat(data);
   $('#driveFolders').checked = data.folders;
 
   renderCrumbs();
@@ -1758,6 +1882,40 @@ async function loadDrive({ append = false } = {}) {
   $('#driveMoreRow').hidden = drive.offset >= drive.total;
   $('#driveCounter').textContent = `Показано ${Math.min(drive.offset, drive.total)} из ${drive.total}`;
   if (!append) renderDriveQueue();
+}
+
+/** Чат диска показываем названием и аватаром: числовой id людям ничего не говорит. */
+function renderDriveChat(data) {
+  const chip = $('#driveChatChip');
+  const avatar = $('#driveChatAvatar');
+  const name = $('#driveChatName');
+
+  if (!data.chatId) {
+    chip.hidden = false;
+    name.textContent = 'Выбрать, где хранить';
+    avatar.textContent = '?';
+    avatar.style.setProperty('--h', 210);
+    avatar.querySelector('img')?.remove();
+    chip.title = 'Диск ещё не привязан к чату';
+    return;
+  }
+
+  const title = data.chat?.title || 'Мой диск';
+  name.textContent = title;
+  chip.title = data.separateChat
+    ? 'Отдельный чат — ваши снимки гостям не видны'
+    : 'Тот же чат, что и у снимков';
+
+  avatar.style.setProperty('--h', hueOf(String(data.chatId)));
+  avatar.textContent = title.slice(0, 1);
+  avatar.querySelector('img')?.remove();
+  if (data.chat?.photo) {
+    const img = document.createElement('img');
+    img.src = `/api/chat-photo?file=${encodeURIComponent(data.chat.photo)}`;
+    img.alt = '';
+    img.addEventListener('error', () => img.remove());
+    avatar.append(img);
+  }
 }
 
 function renderCrumbs() {
@@ -1772,14 +1930,15 @@ function renderCrumbs() {
     return;
   }
 
+  // В корне «Диск» уже написан заголовком — повторять его крошкой незачем
   const rootBtn = document.createElement('button');
-  rootBtn.textContent = 'Диск';
+  rootBtn.textContent = 'Все файлы';
   rootBtn.addEventListener('click', () => guard(null, () => openFolder('')));
 
   if (!drive.folder) {
     const here = document.createElement('span');
     here.className = 'crumb-current';
-    here.textContent = 'Диск';
+    here.textContent = 'Все файлы';
     box.append(here);
     return;
   }
@@ -1829,19 +1988,17 @@ function folderCard(folder) {
   card.className = drive.view === 'grid' ? 'file-card folder' : 'file-row folder';
   card.title = folder.name;
 
-  const icon = document.createElement('span');
-  icon.className = 'file-icon';
-  icon.textContent = '📁';
-
   const name = document.createElement('span');
   name.className = 'file-name';
   name.textContent = folder.name;
 
   const sub = document.createElement('span');
   sub.className = 'file-sub';
-  sub.textContent = folder.n ? `${folder.n} · ${humanSize(folder.bytes)}` : 'пусто';
+  sub.textContent = folder.n
+    ? `${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')} · ${humanSize(folder.bytes)}`
+    : 'пусто';
 
-  card.append(icon, name, sub);
+  card.append(fileGlyph(folder.name, { folder: true }), name, sub);
   card.addEventListener('click', () => guard(null, () => openFolder(folder.name)));
   return card;
 }
@@ -1851,9 +2008,8 @@ function fileCard(r) {
   card.className = drive.view === 'grid' ? 'file-card' : 'file-row';
   card.title = `${r.name}${r.folder ? ` · папка ${r.folder}` : ''}`;
 
-  const icon = document.createElement('span');
-  icon.className = 'file-icon';
-  icon.textContent = r.status === 'sent' ? fileIcon(r.name) : '⏳';
+  const icon = fileGlyph(r.name, { kind: r.file_type ?? r.kind });
+  if (r.status !== 'sent') icon.classList.add('pending');
 
   const name = document.createElement('span');
   name.className = 'file-name';
@@ -1922,7 +2078,7 @@ async function fileActions(r) {
   const ok = await askConfirm({
     title: `Убрать ${r.name} с диска?`,
     text: 'Сообщение в Telegram будет удалено. Файл на компьютере, если он там есть, останется.',
-    icon: '🗑',
+    icon: 'trash',
     okText: 'Убрать',
     danger: true,
   });
@@ -1980,29 +2136,47 @@ async function uploadFiles(files) {
   if (!drive.data?.chatId) throw new Error('Сначала выберите чат для диска');
 
   const box = $('#driveUploads');
+  const list = $('#uploadsList');
   box.hidden = false;
+  list.innerHTML = '';
 
-  for (const file of files) {
-    const row = uploadRow(file.name);
-    box.prepend(row.el);
+  const total = files.length;
+  const bytes = files.reduce((sum, f) => sum + f.size, 0);
+  $('#uploadsTitle').textContent = total === 1 ? 'Загружаю файл' : `Загружаю ${total} ${plural(total, 'файл', 'файла', 'файлов')}`;
+  $('#uploadsSub').textContent = humanSize(bytes);
+
+  let ok = 0;
+  let failed = 0;
+
+  for (const [i, file] of files.entries()) {
+    const row = uploadRow(file.name, file.size);
+    list.append(row.el);
+    $('#uploadsSub').textContent = `${i + 1} из ${total} · ${humanSize(bytes)}`;
 
     try {
       const res = await sendOneFile(file, drive.folder, row.progress);
-      if (res.status === 'duplicate') row.done('уже на диске');
-      else if (res.status === 'failed') row.fail(res.error ?? 'не вышло');
-      else row.done('готово');
+      if (res.status === 'duplicate') { row.done('уже есть'); ok += 1; }
+      else if (res.status === 'failed') { row.fail(res.error ?? 'не вышло'); failed += 1; }
+      else { row.done('готово'); ok += 1; }
     } catch (err) {
       row.fail(err.message);
+      failed += 1;
     }
   }
 
+  $('#uploadsTitle').textContent = failed ? 'Загружено с ошибками' : 'Готово';
+  $('#uploadsSub').textContent = failed ? `${ok} из ${total}, не вышло ${failed}` : `${ok} ${plural(ok, 'файл', 'файла', 'файлов')} · ${humanSize(bytes)}`;
+
   await loadDrive();
   await refresh().catch(() => {});
-  // Прибираем полоски, когда всё закончилось
-  setTimeout(() => {
-    box.innerHTML = '';
-    box.hidden = true;
-  }, 4000);
+
+  // Успешное убираем само; с ошибками оставляем — их надо прочитать
+  if (!failed) {
+    setTimeout(() => {
+      list.innerHTML = '';
+      box.hidden = true;
+    }, 3500);
+  }
 }
 
 /**
@@ -2034,39 +2208,67 @@ function sendOneFile(file, folder, onProgress) {
   });
 }
 
-function uploadRow(name) {
+/**
+ * Строка загрузки. Пока байты идут — растёт полоса и проценты; когда файл
+ * ушёл целиком, длина расти перестаёт, а он ещё едет в Telegram, поэтому
+ * дальше полоса переливается: иначе выглядит как зависание на 100 %.
+ */
+function uploadRow(name, size) {
   const el = document.createElement('div');
   el.className = 'upload-row';
+
+  const main = document.createElement('div');
+  main.className = 'upload-main';
 
   const label = document.createElement('span');
   label.className = 'upload-name';
   label.textContent = name;
 
-  const bar = document.createElement('span');
-  bar.className = 'upload-bar';
+  const track = document.createElement('div');
+  track.className = 'upload-track';
   const fill = document.createElement('div');
-  bar.append(fill);
+  fill.className = 'upload-fill';
+  track.append(fill);
+  main.append(label, track);
 
+  const side = document.createElement('div');
+  side.className = 'upload-side';
   const stateEl = document.createElement('span');
   stateEl.className = 'upload-state';
-  stateEl.textContent = 'жду…';
+  stateEl.textContent = humanSize(size ?? 0);
+  const mark = document.createElement('span');
+  mark.className = 'upload-mark';
+  side.append(stateEl, mark);
 
-  el.append(label, bar, stateEl);
+  el.append(fileGlyph(name), main, side);
+
+  const tick = '<svg viewBox="0 0 20 20"><path stroke="currentColor" d="m4.6 10.4 3.4 3.4 7.4-7.6"/></svg>';
+  const cross = '<svg viewBox="0 0 20 20"><path stroke="currentColor" d="m6 6 8 8M14 6l-8 8"/></svg>';
 
   return {
     el,
     progress: (ratio) => {
       fill.style.width = `${Math.round(ratio * 100)}%`;
-      stateEl.textContent = ratio >= 1 ? 'отправляю в Telegram…' : `${Math.round(ratio * 100)} %`;
+      if (ratio >= 1) {
+        el.classList.add('sending');
+        stateEl.textContent = 'отправляю…';
+      } else {
+        stateEl.textContent = `${Math.round(ratio * 100)} %`;
+      }
     },
     done: (text) => {
-      fill.style.width = '100%';
+      el.classList.remove('sending');
       el.classList.add('done');
+      fill.style.width = '100%';
       stateEl.textContent = text;
+      mark.innerHTML = tick;
     },
     fail: (text) => {
+      el.classList.remove('sending');
       el.classList.add('err');
+      fill.style.width = '100%';
       stateEl.textContent = text;
+      mark.innerHTML = cross;
     },
   };
 }
@@ -2088,11 +2290,28 @@ $('#driveNewFolder').addEventListener('click', (e) => guard(e.target, async () =
 
 let driveTimer = null;
 $('#driveSearch').addEventListener('input', () => {
+  $('#driveSearchClear').hidden = !$('#driveSearch').value;
   clearTimeout(driveTimer);
   driveTimer = setTimeout(() => guard(null, async () => {
     drive.query = $('#driveSearch').value.trim();
     await loadDrive();
   }), 300);
+});
+
+$('#driveSearchClear').addEventListener('click', () => guard(null, async () => {
+  $('#driveSearch').value = '';
+  $('#driveSearchClear').hidden = true;
+  drive.query = '';
+  await loadDrive();
+  $('#driveSearch').focus();
+}));
+
+// Escape в поиске очищает — привычка из системных окон
+$('#driveSearch').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#driveSearch').value) {
+    e.stopPropagation();
+    $('#driveSearchClear').click();
+  }
 });
 
 $$('#segDriveView input').forEach((i) => i.addEventListener('change', () => guard(null, async () => {
@@ -2105,15 +2324,20 @@ $('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive
 /* ── чат диска и загрузка папки целиком ──────────────────────────────────── */
 
 function renderDriveQueue() {
-  renderChips($('#driveQueue'), driveQueue.map((p) => ({ id: p, label: p, title: p })), {
-    empty: 'Пока ничего не выбрано',
+  $('#driveQueueRow').hidden = !driveQueue.length;
+  renderChips($('#driveQueue'), driveQueue.map((p) => ({ id: p, label: p.split('/').pop() || p, title: p })), {
+    empty: '',
     onRemove: (item) => {
       driveQueue = driveQueue.filter((p) => p !== item.id);
       renderDriveQueue();
     },
   });
-  $('#driveUpload').disabled = !driveQueue.length;
 }
+
+$('#driveQueueClear').addEventListener('click', () => {
+  driveQueue = [];
+  renderDriveQueue();
+});
 
 $('#driveAdd').addEventListener('click', () => guard(null, async () => {
   const picked = await askText({
@@ -2141,40 +2365,44 @@ $('#driveFolders').addEventListener('change', () => guard(null, async () => {
   toast($('#driveFolders').checked ? 'Папки будут темами в чате' : 'Всё одной лентой');
 }));
 
-$('#driveChangeChat').addEventListener('click', () => {
-  $('#driveWhere').hidden = false;
-  $('#driveWhere').scrollIntoView({ behavior: 'smooth', block: 'center' });
-});
+$('#driveChatChip').addEventListener('click', (e) => guard(e.target.closest('button'), pickDriveChat));
 
-$('#driveSameChat').addEventListener('click', (e) => guard(e.target, async () => {
-  if (!state?.settings.chatId) throw new Error('Сначала выберите чат для снимков на шаге 4');
-  await api('/api/settings', { DRIVE_CHAT_ID: state.settings.chatId });
-  await refresh();
-  await loadDrive();
-  toast('Диск будет храниться там же, где снимки');
-}));
-
-$('#drivePick').addEventListener('click', (e) => guard(e.target, async () => {
+/** Один список: создать новую группу или взять уже существующую. */
+async function pickDriveChat() {
   const { chats } = await api('/api/detect-chats', {});
-  const picked = await pickFromList({
-    title: 'Куда складывать диск',
-    text: 'Показываю чаты, куда добавлен ваш бот. Лучше отдельный от снимков — к диску вы будете давать доступ другим.',
-    items: chats.map((chat) => ({
+  const items = [
+    {
+      id: '__new__',
+      label: 'Создать новую группу',
+      sub: 'Приватная, с темами — программа сделает всё сама',
+      art: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/><path d="M11 10.6v4.2M8.9 12.7h4.2"/>',
+    },
+    ...chats.map((chat) => ({
       id: chat.id,
       label: chat.title,
-      sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : 'без тем'].join(' · '),
+      sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : 'без тем',
+        String(chat.id) === String(state?.settings.chatId) ? 'здесь ваши снимки' : null].filter(Boolean).join(' · '),
       photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
     })),
-    empty: 'Ничего не нашлось. Добавьте бота в нужный чат, напишите там сообщение и откройте список снова.',
+  ];
+
+  const picked = await pickFromList({
+    title: 'Где хранить диск',
+    text: 'Лучше отдельный чат от снимков: к диску вы будете давать доступ другим.',
+    items,
+    empty: 'Пока нечего выбрать — создайте новую группу.',
   });
   if (!picked) return;
+
+  if (picked.id === '__new__') return createDriveChat();
+
   await api('/api/settings', { DRIVE_CHAT_ID: picked.id });
   await refresh();
   await loadDrive();
   toast(`Диск: «${picked.label}»`);
-}));
+}
 
-$('#driveCreate').addEventListener('click', (e) => guard(e.target, async () => {
+async function createDriveChat() {
   const title = await askText({
     title: 'Название группы для диска',
     text: 'Программа создаст приватную супергруппу с темами и сделает бота администратором.',
@@ -2189,7 +2417,18 @@ $('#driveCreate').addEventListener('click', (e) => guard(e.target, async () => {
   await loadDrive();
   toast(`Диск создан: «${created.title}»`);
   for (const w of created.warnings ?? []) toast(w, true);
+}
+
+$('#driveSameChat').addEventListener('click', (e) => guard(e.target, async () => {
+  if (!state?.settings.chatId) throw new Error('Сначала выберите чат для снимков на шаге 4');
+  await api('/api/settings', { DRIVE_CHAT_ID: state.settings.chatId });
+  await refresh();
+  await loadDrive();
+  toast('Диск будет храниться там же, где снимки');
 }));
+
+$('#drivePick').addEventListener('click', (e) => guard(e.target, pickDriveChat));
+$('#driveCreate').addEventListener('click', (e) => guard(e.target, createDriveChat));
 
 /* ── доступ: ссылки со сроком и гости ────────────────────────────────────── */
 
@@ -2328,7 +2567,7 @@ function renderAccessGuests() {
       const ok = await askConfirm({
         title: `Закрыть доступ: ${guest.name}?`,
         text: 'Человека уберут из чата. Бана не будет — по новой ссылке он сможет войти снова.',
-        icon: '🚪',
+        icon: 'door',
         okText: 'Закрыть доступ',
         danger: true,
       });
@@ -2444,7 +2683,8 @@ function renderLockProfiles(current) {
     const title = document.createElement('b');
     title.textContent = label;
     const sub = document.createElement('small');
-    sub.textContent = p.lock === 'none' ? 'открыт' : p.locked ? '🔒 спросит код' : '🔓 открыт';
+    if (p.lock !== 'none') sub.append(lockGlyph(p.locked));
+    sub.append(p.lock === 'none' ? 'открыт' : p.locked ? 'спросит код' : 'открыт');
     text.append(title, sub);
 
     btn.append(avatar, text);
@@ -2551,19 +2791,18 @@ function statusBadge(status) {
   return map[status] ?? ['', status];
 }
 
-const KIND_ICON = { photo: '🖼', video: '🎬', document: '📄', live_photo: '🌀' };
-
 /**
  * Значок вида файла вместо картинки. Настоящие миниатюры программа больше
  * не тянет: на страницу их приходило до сотни разом, и Telegram за такой
  * поток запросов сажает бота на flood limit — вместе с отправкой архива.
  * Сам снимок в один щелчок открывается в Telegram по ссылке.
+ *
+ * Рисуем тем же fileGlyph, что и диск: один язык значков на всю программу.
  */
 function thumbFor(r, big = false) {
-  const box = document.createElement('span');
-  box.className = big ? 'grid-fallback' : 'thumb';
-  box.textContent = KIND_ICON[r.file_type] ?? KIND_ICON[r.kind] ?? '🖼';
-  return box;
+  const glyph = fileGlyph(r.name ?? '', { kind: r.file_type ?? r.kind });
+  glyph.classList.add(big ? 'glyph-lg' : 'glyph-sm');
+  return glyph;
 }
 
 function appendArchiveGrid(rows) {
@@ -2901,7 +3140,7 @@ $('#doCleanup').addEventListener('click', (e) => guard(e.target, async () => {
   const ok = await askConfirm({
     title: 'Убрать лишние видео?',
     text: `Найдено ${r.found} видео Live Photo, которые ушли отдельными сообщениями. Их сообщения будут удалены из группы, сами файлы на диске останутся.`,
-    icon: '🧹',
+    icon: 'videoX',
     okText: 'Удалить',
     danger: true,
   });

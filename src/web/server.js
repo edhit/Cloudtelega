@@ -310,6 +310,45 @@ async function receiveUpload(req, res, url) {
   }
 }
 
+/**
+ * Как называется чат диска. Числовой id человеку ничего не говорит, поэтому
+ * спрашиваем у Telegram название и аватар и запоминаем их в профиле:
+ * при следующем открытии панель не ждёт сети.
+ */
+async function refreshDriveChat() {
+  const chatId = driveOverview().chatId;
+  if (!chatId || !botConfigured()) return null;
+
+  try {
+    const chat = await getChat(chatId);
+    const info = {
+      id: String(chatId),
+      title: chat.title ?? chat.username ?? String(chatId),
+      photo: chat.photo?.small_file_id ?? null,
+      isForum: Boolean(chat.is_forum),
+      type: chat.type,
+    };
+    writeProfileStore({ driveChat: info });
+    return info;
+  } catch {
+    return readProfileStore().driveChat ?? null;
+  }
+}
+
+/** То, что уже известно про чат диска, без похода в сеть. */
+function knownDriveChat() {
+  const chatId = driveOverview().chatId;
+  if (!chatId) return null;
+  const saved = readProfileStore().driveChat;
+  if (saved?.id === String(chatId)) return saved;
+  // Диск лежит в чате снимков — название у него уже есть
+  if (String(chatId) === String(config.chatId)) {
+    const title = readProfileStore().chatTitle;
+    if (title) return { id: String(chatId), title, photo: null };
+  }
+  return { id: String(chatId), title: '', photo: null };
+}
+
 /** Страница диска: сводка плюс порция записей со ссылками на сообщения. */
 function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) {
   // При поиске папку не сужаем: искать логично по всему диску
@@ -322,7 +361,14 @@ function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) 
     offset: Number(offset) || 0,
     folder: inFolder,
   });
-  return { ...driveOverview(), ...driveFolders(), ...page, folder: inFolder, rows: withLinks(page.rows) };
+  return {
+    ...driveOverview(),
+    ...driveFolders(),
+    ...page,
+    chat: knownDriveChat(),
+    folder: inFolder,
+    rows: withLinks(page.rows),
+  };
 }
 
 /** Загрузка на диск — та же фоновая работа, что скан и отправка. */
@@ -773,6 +819,8 @@ const routes = {
     reloadConfig();
     // Токен и список владельцев мог измениться — бот подхватывает их сразу
     if (patch.TELEGRAM_BOT_TOKEN !== undefined || patch.TELEGRAM_ADMIN_IDS !== undefined) refreshBot();
+    // Сменили чат диска — узнаём, как он называется
+    if (patch.DRIVE_CHAT_ID !== undefined) await refreshDriveChat();
     return buildState();
   },
 
@@ -1169,6 +1217,16 @@ const routes = {
 /* ── сервер ──────────────────────────────────────────────────────────────── */
 
 /**
+ * «Картинки нет» — не ошибка: у половины людей просто не стоит аватарка.
+ * 404 браузер пишет в консоль красным на каждого такого, поэтому отвечаем
+ * 204: запрос удался, показывать нечего. Пустой ответ всё равно вызовет
+ * onerror у <img>, и на месте картинки останется буква.
+ */
+function noPicture(res) {
+  res.writeHead(204, { 'cache-control': 'max-age=600' }).end();
+}
+
+/**
  * Аватар группы или канала — по одному на строку списка, то есть единицы
  * запросов за открытие списка. Миниатюры снимков сюда не ходят: их на страницу
  * приходило до сотни разом, и Telegram за такой поток сажает бота на flood
@@ -1177,7 +1235,7 @@ const routes = {
 async function serveChatPhoto(req, res, url) {
   const fileId = url.searchParams.get('file');
   if (!fileId || !config.botToken) {
-    res.writeHead(404).end();
+    noPicture(res);
     return;
   }
 
@@ -1198,7 +1256,7 @@ async function serveChatPhoto(req, res, url) {
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400' });
     res.end(buffer);
   } catch {
-    res.writeHead(404).end();
+    noPicture(res);
   }
 }
 
@@ -1206,7 +1264,7 @@ async function serveChatPhoto(req, res, url) {
 async function serveUserPhoto(req, res, url) {
   const id = url.searchParams.get('id');
   if (!id || !mtprotoConfigured()) {
-    res.writeHead(404).end();
+    noPicture(res);
     return;
   }
 
@@ -1225,7 +1283,7 @@ async function serveUserPhoto(req, res, url) {
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' });
     res.end(buffer);
   } catch {
-    res.writeHead(404).end();
+    noPicture(res);
   }
 }
 
@@ -1234,7 +1292,7 @@ async function serveWallpaper(req, res, url) {
   const name = url.searchParams.get('name') || config.profile;
   const store = readProfileStore(name);
   if (store.wallpaper?.type !== 'custom' || !store.wallpaper.file) {
-    res.writeHead(404).end();
+    noPicture(res);
     return;
   }
   try {
@@ -1245,7 +1303,7 @@ async function serveWallpaper(req, res, url) {
     res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache' });
     res.end(data);
   } catch {
-    res.writeHead(404).end();
+    noPicture(res);
   }
 }
 
@@ -1254,7 +1312,7 @@ async function serveAvatar(req, res, url) {
   const name = url.searchParams.get('name') || config.profile;
   const file = avatarPath(name);
   if (!file) {
-    res.writeHead(404).end();
+    noPicture(res);
     return;
   }
   const data = await fs.readFile(file);

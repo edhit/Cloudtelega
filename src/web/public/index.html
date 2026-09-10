@@ -4,13 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cloudtelega — настройка</title>
+<!-- Значок вкладки прямо в разметке: отдельный файл — это лишний запрос,
+     а без него браузер пишет 404 в консоль на каждой странице -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235ac8fa%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23007aff%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227.5%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M11%2022.5a5%205%200%200%201-.5-10%206.3%206.3%200%200%201%2012.1-1.5%204.5%204.5%200%200%201%20.4%209%22%2F%3E%3Cpath%20d%3D%22M16%2024.5v-9.6%22%2F%3E%3Cpath%20d%3D%22m12.4%2018.2%203.6-3.4%203.6%203.4%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div class="layout">
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-icon">☁️</div>
+      <div class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M6.9 18.4a4.3 4.3 0 0 1-.4-8.6 5.4 5.4 0 0 1 10.4-1.3 3.9 3.9 0 0 1 .4 7.7"/><path d="M12 20V11.4"/><path d="m8.9 14.3 3.1-3 3.1 3"/></svg>
+      </div>
       <div>
         <div class="brand-title">Cloudtelega</div>
         <div class="brand-sub">Ваше облако в Telegram</div>
@@ -160,12 +165,12 @@
 
       <div class="options">
         <button class="option option-primary" id="optionCreate" aria-pressed="true">
-          <span class="option-icon">✨</span>
+          <span class="option-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3.6 1.9 4.6 4.6 1.9-4.6 1.9L12 16.6l-1.9-4.6L5.5 10l4.6-1.9L12 3.6Z"/><path d="M18.4 15.6l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8.8-1.9Z"/></svg></span>
           <b>Создать за меня</b>
           <small>Программа сама сделает группу, включит темы и добавит бота</small>
         </button>
         <button class="option" id="optionExisting" aria-pressed="false">
-          <span class="option-icon">📂</span>
+          <span class="option-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.4 7.6a2 2 0 0 1 2-2h3.6l1.9 2.1h6.7a2 2 0 0 1 2 2v1.1H3.4V7.6Z"/><path d="M3.4 10.8h17.2l-1.5 6.6a2 2 0 0 1-2 1.6H6.9a2 2 0 0 1-2-1.6l-1.5-6.6Z"/></svg></span>
           <b>У меня уже есть</b>
           <small>Подключить группу или канал, которые вы создали сами</small>
         </button>
@@ -365,7 +370,7 @@
       <div class="group-title">Как будет выглядеть сообщение</div>
       <div class="preview">
         <div class="bubble">
-          <div class="bubble-photo">🏔</div>
+          <div class="bubble-photo" id="bubblePhoto" aria-hidden="true"></div>
           <div class="bubble-caption" id="captionPreview"></div>
           <div class="bubble-time">20:16</div>
         </div>
@@ -546,40 +551,63 @@
 
     <!-- ── Диск ──────────────────────────────────────────────────────── -->
     <section class="pane pane-wide" id="pane-drive">
-      <div class="drive-head">
-        <div>
+      <div class="drive-top">
+        <div class="drive-title">
           <h1>Диск</h1>
-          <p class="lead">Перетащите файлы прямо сюда. Любые: документы, архивы, музыка, видео — Telegram хранит их оригиналом.</p>
+          <button class="chat-chip" id="driveChatChip" title="Где хранится диск">
+            <span class="chat-chip-avatar" id="driveChatAvatar"></span>
+            <span class="chat-chip-text" id="driveChatName">Не выбрано</span>
+            <svg class="chat-chip-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8.2 3.5 3.4 3.5-3.4"/></svg>
+          </button>
         </div>
         <div class="drive-actions">
-          <button class="btn" id="driveNewFolder">Новая папка</button>
-          <button class="btn btn-primary" id="drivePickFiles">Загрузить файлы</button>
+          <button class="btn btn-icon" id="driveNewFolder" title="Новая папка">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M11 11.4v4.2M8.9 13.5h4.2"/></svg>
+            <span>Новая папка</span>
+          </button>
+          <button class="btn btn-primary btn-icon" id="drivePickFiles">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
+            <span>Загрузить</span>
+          </button>
           <input type="file" id="driveFileInput" multiple hidden>
         </div>
       </div>
 
       <div class="note blue" id="driveWhere" hidden>
-        <b>Сначала выберите чат для диска.</b> Лучше отдельную приватную супергруппу с темами:
-        темы работают как папки, а к диску вы будете давать доступ посторонним — в общем чате
-        им были бы видны и ваши снимки.
+        <b>Выберите, где хранить диск</b>
+        Лучше отдельную приватную группу с темами: темы работают как папки, а к диску вы будете
+        давать доступ посторонним — в общем чате им были бы видны и ваши снимки.
         <div class="btn-row">
           <button class="btn btn-primary" id="driveCreate">Создать за меня</button>
           <button class="btn" id="drivePick">Выбрать готовый</button>
-          <button class="btn" id="driveSameChat">Взять чат снимков</button>
+          <button class="btn" id="driveSameChat">Хранить со снимками</button>
         </div>
       </div>
 
-      <div class="drive-bar">
+      <div class="toolbar">
         <nav class="crumbs" id="driveCrumbs"></nav>
-        <input type="search" id="driveSearch" class="drive-search" placeholder="Поиск по диску" autocomplete="off">
-        <div class="seg seg-small" id="segDriveView">
-          <label><input type="radio" name="driveview" value="grid" checked><span>Плиткой</span></label>
-          <label><input type="radio" name="driveview" value="list"><span>Списком</span></label>
+        <label class="search">
+          <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.2"/><path d="m12.8 12.8 3.6 3.6"/></svg>
+          <input type="text" id="driveSearch" placeholder="Поиск" autocomplete="off" spellcheck="false">
+          <button type="button" class="search-clear" id="driveSearchClear" hidden aria-label="Очистить">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>
+          </button>
+        </label>
+        <div class="seg seg-icons" id="segDriveView">
+          <label title="Плиткой"><input type="radio" name="driveview" value="grid" checked><span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.6"/><rect x="11" y="3" width="6" height="6" rx="1.6"/><rect x="3" y="11" width="6" height="6" rx="1.6"/><rect x="11" y="11" width="6" height="6" rx="1.6"/></svg>
+          </span></label>
+          <label title="Списком"><input type="radio" name="driveview" value="list"><span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5.5h10M7 10h10M7 14.5h10"/><circle cx="3.6" cy="5.5" r="1"/><circle cx="3.6" cy="10" r="1"/><circle cx="3.6" cy="14.5" r="1"/></svg>
+          </span></label>
         </div>
       </div>
 
       <div class="dropzone" id="driveDrop">
-        <div class="drop-hint" id="driveDropHint"><b>Отпустите — загружу на диск</b></div>
+        <div class="drop-hint" id="driveDropHint">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
+          <b>Отпустите — загружу на диск</b>
+        </div>
         <div id="driveBody"></div>
       </div>
 
@@ -588,29 +616,37 @@
         <span class="hint" style="margin:0" id="driveCounter"></span>
       </div>
 
-      <div class="uploads" id="driveUploads" hidden></div>
-
-      <details class="group drive-extra">
-        <summary>Загрузить папку с компьютера целиком</summary>
-        <div class="drive-extra-body">
-          <p class="hint" style="margin-top:0">Перетаскивание берёт отдельные файлы. Если нужно залить большую папку со всеми вложенными — укажите путь к ней здесь.</p>
-          <div class="pathlist" id="driveQueue"></div>
-          <div class="btn-row">
-            <button class="btn" id="driveAdd">Указать папку…</button>
-            <button class="btn btn-primary" id="driveUpload">Загрузить папку</button>
-          </div>
+      <div class="uploads" id="driveUploads" hidden>
+        <div class="uploads-head">
+          <b id="uploadsTitle">Загрузка</b>
+          <span class="uploads-sub" id="uploadsSub"></span>
         </div>
-      </details>
+        <div id="uploadsList"></div>
+      </div>
 
-      <div class="group-title">Где хранится</div>
+      <div class="group-title">Ещё</div>
       <div class="group">
         <div class="row">
-          <div class="row-label"><b>Чат диска</b><small id="driveChatText">—</small></div>
-          <div class="row-side">
-            <button class="btn btn-small" id="driveChangeChat">Сменить</button>
+          <span class="row-glyph blue">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M12 15.4v-4.6M9.9 12.9 12 10.8l2.1 2.1"/></svg>
+          </span>
+          <div class="row-label">
+            <b>Загрузить папку с компьютера</b>
+            <small>Перетаскивание берёт отдельные файлы. Целую папку со всеми вложенными — отсюда</small>
+          </div>
+          <button class="btn" id="driveAdd">Выбрать папку…</button>
+        </div>
+        <div class="row row-stack" id="driveQueueRow" hidden>
+          <div class="pathlist" id="driveQueue"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="driveUpload">Загрузить папку</button>
+            <button class="btn" id="driveQueueClear">Очистить</button>
           </div>
         </div>
         <div class="row">
+          <span class="row-glyph green">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/></svg>
+          </span>
           <div class="row-label"><b>Папки — темами в чате</b><small>Папка на диске видна в Telegram как отдельная тема</small></div>
           <label class="switch"><input type="checkbox" id="driveFolders" checked><span></span></label>
         </div>
