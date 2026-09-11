@@ -5,7 +5,7 @@ import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import { formatDate } from './dates.js';
 import {
-  fileIdCoverage, getMeta, lastSent, listFailed, listTopics, randomSent,
+  fileIdCoverage, getMeta, lastSent, listFailed, listTopics, putSeenChat, randomSent,
   resetFailed, searchSent, setMeta, stats,
 } from './db.js';
 import { detectPhones, inspectMount, listMountPoints } from './devices.js';
@@ -490,12 +490,20 @@ function remember(update) {
     update.my_chat_member?.chat ?? update.edited_channel_post?.chat;
 
   if (chat && chat.type !== 'private') {
-    seen.chats.set(String(chat.id), {
+    const entry = {
       id: String(chat.id),
       title: chat.title ?? String(chat.id),
       type: chat.type,
       isForum: Boolean(chat.is_forum),
-    });
+    };
+    seen.chats.set(entry.id, entry);
+    // И в базу: иначе список групп исчезал при каждом перезапуске,
+    // а второй раз Telegram тот же апдейт уже не отдаст
+    try {
+      putSeenChat(entry);
+    } catch (err) {
+      log.warn(`Не смог запомнить чат ${entry.id}: ${err.message}`);
+    }
   }
 
   const from = update.message?.from ?? update.edited_message?.from;

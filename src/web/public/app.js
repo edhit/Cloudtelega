@@ -2624,14 +2624,52 @@ async function pickStorageChat({ title, text, busyChatId, currentChatId, createL
       isForum: chat.isForum,
       type: chat.type,
     })),
+    // Запасной путь. Telegram показывает группу в списке только вместе
+    // со свежим сообщением в ней — прав администратора для этого мало,
+    // и без этого пункта готовая группа могла оказаться недостижимой
+    {
+      id: '__byhand__',
+      label: 'Указать группу вручную',
+      sub: 'Если нужной нет в списке: по ссылке, @имени или id',
+      art: '<circle cx="9.6" cy="9.6" r="5.4"/><path d="m13.8 13.8 4 4"/>',
+      tint: '#8e8e93',
+    },
   ];
 
-  return pickFromList({
+  const picked = await pickFromList({
     title,
     text,
     items,
-    empty: 'Свободных чатов не видно. Добавьте бота в группу или канал, напишите там любое сообщение — и откройте список снова.',
+    empty: 'Пока ничего не вижу.',
   });
+
+  if (picked?.id !== '__byhand__') return picked;
+  return addChatByHand();
+}
+
+/**
+ * Спрашиваем Telegram про конкретную группу. Работает, даже если в ней
+ * давно никто не писал: боту достаточно быть там участником.
+ */
+async function addChatByHand() {
+  const ref = await askText({
+    title: 'Указать группу вручную',
+    text: 'Откройте группу в Telegram, нажмите на любое сообщение в ней → «Копировать ссылку» и вставьте сюда. '
+      + 'Подойдёт также @имя группы или её числовой id. Бот должен быть в этой группе.',
+    placeholder: 'https://t.me/c/2233445566/12 или @mygroup',
+    okText: 'Найти',
+  });
+  if (!ref) return null;
+
+  const { chat } = await api('/api/add-chat', { ref });
+  toast(`Нашлась группа «${chat.title}»`);
+  return {
+    id: chat.id,
+    label: chat.title,
+    sub: chatSub(chat),
+    isForum: chat.isForum,
+    type: chat.type,
+  };
 }
 
 async function pickDriveChat() {

@@ -9,8 +9,8 @@ import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../co
 import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import {
-  closeDb, countFiles, fileIdCoverage, listFiles, listGuests, listTopics,
-  searchFiles, sqliteDriver, stats,
+  closeDb, countFiles, fileIdCoverage, listFiles, listGuests, listSeenChats, listTopics,
+  putSeenChat, searchFiles, sqliteDriver, stats,
 } from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
@@ -674,22 +674,87 @@ async function runChecks() {
  * Пока бот слушает команды, второй getUpdates Telegram не разрешит — тогда
  * берём то, что бот уже увидел сам.
  */
+/**
+ * Разбирает то, что человек вставил, в нечто, понятное Telegram.
+ * Принимаем всё, что можно скопировать из приложения: числовой id, @имя,
+ * ссылку на группу и ссылку на сообщение внутри неё.
+ */
+export function parseChatRef(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) throw new Error('Пусто — вставьте ссылку, @имя или id группы');
+
+  // Ссылка на сообщение в приватной группе: t.me/c/2233445566/12 → -1002233445566
+  const priv = text.match(/t\.me\/c\/(\d+)/i);
+  if (priv) return `-100${priv[1]}`;
+
+  // Пригласительная ссылка Telegram по ней чат не отдаёт — и это надо сказать прямо
+  if (/t\.me\/(joinchat\/|\+)/i.test(text)) {
+    throw new Error('Это пригласительная ссылка — по ней Telegram чат не отдаёт. '
+      + 'Нужен @имя группы, её числовой id или ссылка на любое сообщение в ней');
+  }
+
+  const named = text.match(/t\.me\/([A-Za-z][\w]{3,})/i);
+  if (named) return `@${named[1]}`;
+
+  if (/^@[A-Za-z][\w]{3,}$/.test(text)) return text;
+  if (/^[A-Za-z][\w]{3,}$/.test(text)) return `@${text}`;
+
+  const id = text.match(/-?\d{6,}/)?.[0];
+  if (id) return id.startsWith('-') ? id : `-100${id}`;
+
+  throw new Error('Не понял, что это. Вставьте @имя группы, её числовой id или ссылку на сообщение в ней');
+}
+
+/**
+ * Спрашивает Telegram про конкретный чат и запоминает его. Это запасной путь
+ * на случай, когда чат не показался сам: Telegram отдаёт чат в списке только
+ * вместе со свежим сообщением, а прав администратора для этого мало.
+ */
+async function addChatByHand(raw) {
+  const ref = parseChatRef(raw);
+  if (!botConfigured()) throw new Error('Сначала подключите бота — спрашивать Telegram некому');
+
+  let chat;
+  try {
+    chat = await getChat(ref);
+  } catch (err) {
+    throw new Error(`Telegram не отдал этот чат: ${describeError(err, { kind: 'bot' })}. `
+      + 'Проверьте, что бот добавлен туда администратором, и что id или @имя скопированы целиком');
+  }
+
+  const entry = {
+    id: String(chat.id),
+    title: chat.title ?? chat.username ?? String(chat.id),
+    type: chat.type,
+    isForum: Boolean(chat.is_forum),
+  };
+  putSeenChat(entry);
+  // Название уже в руках — незачем спрашивать Telegram второй раз
+  writeProfileStore({ chats: { ...readProfileStore().chats, [entry.id]: { ...entry, photo: chat.photo?.small_file_id ?? null } } });
+  log.ok(`Чат «${entry.title}» добавлен в список вручную`);
+  return entry;
+}
+
 async function detectChats() {
   const found = new Map();
 
   const updates = botRunning() ? [] : await getUpdates(0, 0);
+  // Сначала то, что помним между запусками, потом — увиденное этим запуском
+  for (const chat of listSeenChats()) found.set(chat.id, { ...chat });
   for (const chat of seenChats()) found.set(chat.id, { ...chat });
 
   for (const u of updates) {
     const chat =
       u.channel_post?.chat ?? u.message?.chat ?? u.my_chat_member?.chat ?? u.edited_channel_post?.chat;
     if (!chat || chat.type === 'private') continue;
-    found.set(String(chat.id), {
+    const entry = {
       id: String(chat.id),
       title: chat.title ?? String(chat.id),
       type: chat.type,
       isForum: Boolean(chat.is_forum),
-    });
+    };
+    found.set(entry.id, entry);
+    putSeenChat(entry);
   }
 
   // Уже выбранные чаты в списке нужны всегда — и чат снимков, и чат диска.
@@ -697,12 +762,14 @@ async function detectChats() {
   // пропасть из списка она не должна ни при каких обстоятельствах
   for (const id of [config.chatId, config.driveChatId]) {
     if (!id || found.has(String(id))) continue;
-    found.set(String(id), {
+    const entry = {
       id: String(id),
       title: knownChat(id).title || String(id),
       type: 'supergroup',
       isForum: false,
-    });
+    };
+    found.set(entry.id, entry);
+    putSeenChat(entry);
   }
 
   // Подтягиваем аватар и количество участников — со списком приятнее работать
@@ -1253,6 +1320,12 @@ const routes = {
     };
   },
   'POST /api/detect-chats': async () => ({ chats: await detectChats() }),
+
+  // Запасной путь: чат не показался сам — спросим Telegram про него напрямую
+  'POST /api/add-chat': async (body) => {
+    const chat = await addChatByHand(body?.ref);
+    return { chat, chats: await detectChats() };
+  },
 
   'POST /api/login/start': async (body) => {
     // Пустые поля означают «оставить то, что уже сохранено», а не «стереть».

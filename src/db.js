@@ -47,6 +47,18 @@ CREATE TABLE IF NOT EXISTS hash_cache (
   sha256   TEXT    NOT NULL
 );
 
+-- Группы и каналы, где бот что-то видел. Раньше этот список жил только
+-- в памяти и пропадал при каждом перезапуске: группа с готовым архивом
+-- исчезала из выбора, и вернуть её было нечем — Telegram отдаёт чат только
+-- вместе со свежим сообщением в нём, а прав администратора для этого мало.
+CREATE TABLE IF NOT EXISTS seen_chats (
+  id       TEXT PRIMARY KEY,
+  title    TEXT,
+  type     TEXT,
+  is_forum INTEGER NOT NULL DEFAULT 0,
+  seen_at  INTEGER NOT NULL
+);
+
 -- Топики форум-супергруппы: год -> message_thread_id
 CREATE TABLE IF NOT EXISTS topics (
   chat_id  TEXT    NOT NULL,
@@ -501,6 +513,34 @@ export function putTopic(chatId, key, topicId, title, bucket = 'photos') {
          topic_id = excluded.topic_id, title = excluded.title, bucket = excluded.bucket`,
     )
     .run(String(chatId), key, topicId, title ?? key, bucket);
+}
+
+/* ── чаты, которые программа когда-либо видела ───────────────────────────── */
+
+/** Запоминает чат навсегда: список выбора не должен зависеть от перезапуска. */
+export function putSeenChat({ id, title, type, isForum }) {
+  if (!id) return;
+  openDb()
+    .prepare(
+      `INSERT INTO seen_chats (id, title, type, is_forum, seen_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title = COALESCE(excluded.title, seen_chats.title),
+         type = COALESCE(excluded.type, seen_chats.type),
+         is_forum = excluded.is_forum,
+         seen_at = excluded.seen_at`,
+    )
+    .run(String(id), title ?? null, type ?? null, isForum ? 1 : 0, Date.now());
+}
+
+export function listSeenChats() {
+  return openDb()
+    .prepare('SELECT id, title, type, is_forum FROM seen_chats ORDER BY seen_at DESC')
+    .all()
+    .map((r) => ({ id: r.id, title: r.title || r.id, type: r.type || 'supergroup', isForum: Boolean(r.is_forum) }));
+}
+
+export function forgetSeenChat(id) {
+  openDb().prepare('DELETE FROM seen_chats WHERE id = ?').run(String(id));
 }
 
 /** Обратный поиск: по номеру темы — её ключ, то есть путь папки. */
