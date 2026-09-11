@@ -54,8 +54,8 @@ export function driveOverview() {
 
 /* ── папки ───────────────────────────────────────────────────────────────── */
 
-// Папка диска — это тема в чате. Имя темы Telegram ограничивает 128 символами,
-// а из имени убираем то, что ломает навигацию.
+// Одно звено пути. Косая черта — разделитель папок, поэтому внутри имени
+// её быть не может; Telegram ограничивает имя темы 128 символами.
 export function cleanFolderName(raw) {
   const name = String(raw ?? '')
     .replace(/[\\/\u0000-\u001f]/g, ' ')
@@ -67,45 +67,87 @@ export function cleanFolderName(raw) {
   return name;
 }
 
-/** Список папок с числом файлов; корень идёт первым. */
-export function folders() {
+// Глубже вложенность людям уже не нужна, а имя темы в Telegram не резиновое
+const MAX_DEPTH = 8;
+
+/**
+ * Путь папки целиком: «Договоры/2026/Аренда». Именно он лежит в базе,
+ * поэтому вложенность не требует отдельной таблицы — достаточно разобрать
+ * строку. Каждое звено чистим по отдельности, пустые выбрасываем.
+ */
+export function cleanFolderPath(raw) {
+  const parts = String(raw ?? '')
+    .split('/')
+    .map((part) => part.replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((part) => part.slice(0, 96));
+
+  if (!parts.length) throw new Error('Пустое имя папки');
+  if (parts.some((p) => p === '.' || p === '..')) throw new Error('Так папку назвать нельзя');
+  if (parts.length > MAX_DEPTH) throw new Error(`Глубже ${MAX_DEPTH} папок не уходим — станет неудобно`);
+  return parts.join('/');
+}
+
+/** Имя темы в Telegram для папки: путь целиком, чтобы его было видно и там. */
+function topicNameFor(path) {
+  const name = path.split('/').join(' / ');
+  return name.length <= 120 ? name : `…${name.slice(-119)}`;
+}
+
+/** Что лежит внутри папки `parent`: сама папка и её непосредственные дети. */
+export function folders(parent = '') {
   const chatId = driveChatId();
+  const here = parent ? cleanFolderPath(parent) : '';
   return {
-    root: { name: '', title: 'Все файлы', n: driveRootCount(BUCKET) },
-    list: listDriveFolders(chatId, BUCKET),
+    root: { name: here, title: here ? here.split('/').at(-1) : 'Все файлы', n: driveRootCount(BUCKET, here) },
+    list: listDriveFolders(chatId, BUCKET, here),
   };
 }
 
-/** Создаёт папку: заводит тему в чате, чтобы она была видна и в Telegram. */
-export async function createFolder(raw) {
-  const name = cleanFolderName(raw);
+/**
+ * Создаёт папку: заводит под неё тему в чате, чтобы папка была видна
+ * и в самом Telegram.
+ * @param {string} raw имя папки
+ * @param {string} parent путь папки, внутри которой создаём
+ */
+export async function createFolder(raw, parent = '') {
+  // Не `path`: так зовётся модуль node:path, импортированный выше
+  const full = cleanFolderPath(parent ? `${cleanFolderPath(parent)}/${cleanFolderName(raw)}` : raw);
   const chatId = driveChatId();
   if (!chatId) throw new Error('Не выбран чат для диска');
   if (!config.driveFolders) throw new Error('Папки выключены — включите «Папки — темами» на панели диска');
 
-  const topicId = await resolveTopic(name, chatId);
-  log.ok(`Папка «${name}» готова (тема ${topicId})`);
-  return { name, topicId };
+  const topicId = await resolveTopic(topicNameFor(full), chatId, { key: full, bucket: BUCKET });
+  log.ok(`Папка «${full}» готова (тема ${topicId})`);
+  return { name: full.split('/').at(-1), path: full, topicId };
 }
 
 /** Переложить файл в другую папку. */
 export function moveFile(id, folder) {
-  const name = folder ? cleanFolderName(folder) : null;
-  return setFileFolder(id, name);
+  return setFileFolder(id, folder ? cleanFolderPath(folder) : null);
 }
 
-/** Имя темы для файла: верхняя папка относительно корня, иначе «Разное». */
+/**
+ * Папка для файла — его путь относительно корня, целиком. Раньше брали
+ * только верхнее звено, и дерево с компьютера схлопывалось в один уровень;
+ * теперь «Отчёты/2026/Март» так и остаётся «Отчёты/2026/Март».
+ */
 function folderOf(absPath, root) {
   if (!root) return null;
-  const rel = path.relative(root, absPath);
-  const parts = rel.split(path.sep).filter(Boolean);
-  return parts.length > 1 ? parts[0] : null;
+  const parts = path.relative(root, absPath).split(path.sep).filter(Boolean);
+  parts.pop(); // последнее звено — имя самого файла
+  if (!parts.length) return null;
+  try {
+    return cleanFolderPath(parts.slice(0, MAX_DEPTH).join('/'));
+  } catch {
+    return null;
+  }
 }
 
 /** Подпись под файлом на диске — коротко и по делу. */
 function driveCaption(file, folder) {
   const parts = [file.name, humanSize(file.size)];
-  if (folder) parts.push(`папка: ${folder}`);
+  if (folder) parts.push(`папка: ${folder.split('/').join(' / ')}`);
   return parts.join(' · ');
 }
 
@@ -163,7 +205,9 @@ export async function putFile(absPath, { root, folder, displayName } = {}) {
 
   try {
     const folderName = folder ?? (config.driveFolders ? folderOf(absPath, root) : null);
-    const topicId = folderName && config.driveFolders ? await resolveTopic(folderName, chatId) : null;
+    const topicId = folderName && config.driveFolders
+      ? await resolveTopic(topicNameFor(folderName), chatId, { key: folderName, bucket: BUCKET })
+      : null;
     record.folder = folderName ?? null;
     upsertPending(record);
 
@@ -216,7 +260,7 @@ export async function putFile(absPath, { root, folder, displayName } = {}) {
  */
 export async function putUploaded({ tmpPath, name, folder = null }) {
   const safeName = String(name || path.basename(tmpPath)).replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 200);
-  const folderName = folder ? cleanFolderName(folder) : null;
+  const folderName = folder ? cleanFolderPath(folder) : null;
 
   try {
     return await putFile(tmpPath, { folder: folderName, displayName: safeName });

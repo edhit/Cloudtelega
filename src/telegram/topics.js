@@ -30,33 +30,40 @@ async function loadRemoteTopics(chatId) {
  * @param {string} title название темы — год для архива, имя папки для диска
  * @param {string} chatId в каком чате
  */
-export async function resolveTopic(title, chatId = config.chatId) {
+/**
+ * Тема под ключом `key`; если ключ не задан, им становится само название.
+ * Ключ и название расходятся у вложенных папок диска: в базе папка лежит
+ * путём «Договоры/2026», а темой в Telegram зовётся «Договоры / 2026» —
+ * искать её надо по пути, а показывать человеку по названию.
+ */
+export async function resolveTopic(title, chatId = config.chatId, { key: rawKey, bucket = 'photos' } = {}) {
   if (!chatId) throw new Error('Не задан чат для темы');
-  const key = String(title).trim();
+  const name = String(title).trim();
+  const key = String(rawKey ?? title).trim();
 
   const cached = getTopic(chatId, key);
   if (cached) return cached;
 
   const remote = await loadRemoteTopics(chatId);
-  const found = remote?.find((t) => t.title.trim() === key);
+  const found = remote?.find((t) => t.title.trim() === name);
   if (found) {
-    putTopic(chatId, key, found.id, found.title);
-    log.info(`Тема «${key}» уже существует (id ${found.id})`);
+    putTopic(chatId, key, found.id, found.title, bucket);
+    log.info(`Тема «${name}» уже существует (id ${found.id})`);
     return found.id;
   }
 
   let topicId;
   if (botConfigured()) {
-    topicId = await createForumTopicViaBot(key, chatId);
+    topicId = await createForumTopicViaBot(name, chatId);
   } else if (mtprotoConfigured()) {
-    topicId = await createForumTopicViaAccount(key, chatId);
+    topicId = await createForumTopicViaAccount(name, chatId);
   } else {
     throw new Error('Нет ни бота, ни аккаунта — некому создать тему');
   }
 
-  putTopic(chatId, key, topicId, key);
-  remoteTopicsCache.get(chatId)?.push({ id: topicId, title: key });
-  log.ok(`Создана тема «${key}» (id ${topicId})`);
+  putTopic(chatId, key, topicId, name, bucket);
+  remoteTopicsCache.get(chatId)?.push({ id: topicId, title: name });
+  log.ok(`Создана тема «${name}» (id ${topicId})`);
   return topicId;
 }
 

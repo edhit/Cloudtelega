@@ -115,6 +115,20 @@ function migrate(d) {
   add('files', 'bucket', "TEXT NOT NULL DEFAULT 'photos'");
   // folder — папка диска, в которой лежит файл (пусто = корень)
   add('files', 'folder', 'TEXT');
+  // bucket у темы: год снимков и папка диска живут в одной таблице, но это
+  // разные вещи. Без пометки диск показывал годовые темы архива как свои
+  // папки — пустые, потому что снимки лежат в другом bucket.
+  add('topics', 'bucket', "TEXT NOT NULL DEFAULT 'photos'");
+
+  // У тем, заведённых до появления этой пометки, bucket выставился в 'photos'
+  // по умолчанию — вместе с папками диска. Год съёмки выглядит как «2026»,
+  // всё остальное заводил диск: по этому и разбираем старые записи.
+  const topicVersion = d.prepare('SELECT value FROM meta WHERE key = ?').get('topic_bucket')?.value;
+  if (topicVersion !== '1') {
+    d.prepare(`UPDATE topics SET bucket = 'drive' WHERE key NOT GLOB '[0-9][0-9][0-9][0-9]'`).run();
+    d.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run('topic_bucket', '1');
+  }
 
   // Пересчитываем stem_name: раньше суффикс _HEVC у видео Live Photo не отбрасывался,
   // из-за чего IMG_0373.jpg и IMG_0373_HEVC.MOV считались разными кадрами.
@@ -476,13 +490,14 @@ export function getTopic(chatId, key) {
   );
 }
 
-export function putTopic(chatId, key, topicId, title) {
+export function putTopic(chatId, key, topicId, title, bucket = 'photos') {
   openDb()
     .prepare(
-      `INSERT INTO topics (chat_id, key, topic_id, title) VALUES (?, ?, ?, ?)
-       ON CONFLICT(chat_id, key) DO UPDATE SET topic_id = excluded.topic_id, title = excluded.title`,
+      `INSERT INTO topics (chat_id, key, topic_id, title, bucket) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(chat_id, key) DO UPDATE SET
+         topic_id = excluded.topic_id, title = excluded.title, bucket = excluded.bucket`,
     )
-    .run(String(chatId), key, topicId, title ?? key);
+    .run(String(chatId), key, topicId, title ?? key, bucket);
 }
 
 export function listTopics(chatId) {
@@ -623,40 +638,86 @@ export function setGuestExpiry(chatId, userId, expiresAt) {
 /* ── папки диска ─────────────────────────────────────────────────────────── */
 
 /**
- * Папки диска со счётчиками. Папка существует, пока в ней что-то лежит
- * или пока о ней есть запись в topics — иначе только что созданная пустая
- * папка исчезала бы сразу после создания.
+ * Все папки, о которых что-то известно: и те, где лежат файлы, и пустые,
+ * заведённые вручную (о них помнит таблица topics). Путь папки хранится
+ * целиком — «Договоры/2026/Аренда», — поэтому вложенность достаётся
+ * разбором строки, без отдельной таблицы дерева.
  */
-export function listDriveFolders(chatId, bucket = 'drive') {
+function knownFolderPaths(chatId, bucket) {
   const d = openDb();
-  const counted = d
+  const known = new Map();
+
+  for (const row of d
     .prepare(
-      `SELECT folder AS name, COUNT(*) n, COALESCE(SUM(size), 0) bytes
+      `SELECT folder AS path, COUNT(*) n, COALESCE(SUM(size), 0) bytes
          FROM files
         WHERE bucket = ? AND folder IS NOT NULL AND folder <> ''
         GROUP BY folder`,
     )
-    .all(bucket);
+    .all(bucket)) {
+    known.set(row.path, { path: row.path, n: row.n, bytes: row.bytes, topicId: null });
+  }
 
-  const known = new Map(counted.map((f) => [f.name, { ...f, topicId: null }]));
   if (chatId) {
-    for (const t of d.prepare('SELECT key, topic_id FROM topics WHERE chat_id = ?').all(String(chatId))) {
-      const entry = known.get(t.key) ?? { name: t.key, n: 0, bytes: 0 };
+    const topics = d
+      .prepare('SELECT key, topic_id FROM topics WHERE chat_id = ? AND bucket = ?')
+      .all(String(chatId), bucket);
+    for (const t of topics) {
+      const entry = known.get(t.key) ?? { path: t.key, n: 0, bytes: 0, topicId: null };
       entry.topicId = t.topic_id;
       known.set(t.key, entry);
     }
+    // Папка «Договоры/2026» означает, что есть и «Договоры», даже если
+    // в ней самой ничего не лежит и темы под неё никто не заводил
+    for (const path of [...known.keys()]) {
+      const parts = path.split('/');
+      for (let i = 1; i < parts.length; i += 1) {
+        const branch = parts.slice(0, i).join('/');
+        if (!known.has(branch)) known.set(branch, { path: branch, n: 0, bytes: 0, topicId: null });
+      }
+    }
   }
 
-  return [...known.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  return known;
 }
 
-/** Сколько лежит в корне диска — там, где папка не указана. */
-export function driveRootCount(bucket = 'drive') {
-  return Number(
-    openDb()
-      .prepare(`SELECT COUNT(*) n FROM files WHERE bucket = ? AND (folder IS NULL OR folder = '')`)
-      .get(bucket)?.n ?? 0,
-  );
+/**
+ * Папки, лежащие непосредственно внутри `parent` (пусто — корень).
+ * Счётчики суммируют всё, что внутри, вместе с вложенными папками:
+ * человек ждёт от папки «Договоры» числа всех договоров, а не только тех,
+ * что валяются прямо в ней.
+ */
+export function listDriveFolders(chatId, bucket = 'drive', parent = '') {
+  const prefix = parent ? `${parent}/` : '';
+  const children = new Map();
+
+  for (const entry of knownFolderPaths(chatId, bucket).values()) {
+    if (parent && !entry.path.startsWith(prefix)) continue;
+    const rest = entry.path.slice(prefix.length);
+    if (!rest) continue;
+
+    const name = rest.split('/')[0];
+    const path = prefix + name;
+    const child = children.get(path) ?? { name, path, n: 0, bytes: 0, topicId: null, folders: 0 };
+    child.n += entry.n;
+    child.bytes += entry.bytes;
+    if (entry.path === path) child.topicId = entry.topicId;
+    else child.folders += 1;
+    children.set(path, child);
+  }
+
+  return [...children.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+/** Сколько файлов лежит прямо в этой папке (пусто — корень диска). */
+export function driveRootCount(bucket = 'drive', folder = '') {
+  const d = openDb();
+  if (!folder) {
+    return Number(
+      d.prepare(`SELECT COUNT(*) n FROM files WHERE bucket = ? AND (folder IS NULL OR folder = '')`).get(bucket)?.n ?? 0,
+    );
+  }
+  return Number(d.prepare('SELECT COUNT(*) n FROM files WHERE bucket = ? AND folder = ?').get(bucket, folder)?.n ?? 0);
 }
 
 /** Переложить файл в другую папку (в самом Telegram сообщение не двигается). */

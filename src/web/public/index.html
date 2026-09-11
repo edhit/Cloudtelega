@@ -29,7 +29,9 @@
         <span class="account-text"><b>Добавить профиль</b></span>
       </button>
     </div>
-    <div class="side-title">Приложения</div>
+    <ul class="nav nav-plain" id="navHome"></ul>
+
+    <div class="side-title">Хранилища</div>
     <ul class="nav nav-plain" id="navApps"></ul>
 
     <div class="side-title">
@@ -79,6 +81,26 @@
   </aside>
 
   <main class="content">
+
+    <!--
+      Шапка открытого хранилища. Хранилище — это чат в Telegram, а вкладки —
+      три вопроса о нём: что внутри, как туда класть, кого пускаю. Панели
+      ниже общие, шапка просто переключает, какая из них видна.
+    -->
+    <div class="storage-head" id="storageHead" hidden>
+      <div class="storage-title">
+        <span class="storage-icon" id="storageIcon"></span>
+        <div>
+          <h1 id="storageName">Хранилище</h1>
+          <button class="chat-chip" id="storageChat" title="В каком чате Telegram лежит">
+            <span class="chat-chip-avatar" id="storageChatAvatar"></span>
+            <span class="chat-chip-text" id="storageChatName">Не выбрано</span>
+            <svg class="chat-chip-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8.2 3.5 3.4 3.5-3.4"/></svg>
+          </button>
+        </div>
+      </div>
+      <nav class="tabs" id="storageTabs"></nav>
+    </div>
 
     <!-- ── Главный экран: витрина приложений ─────────────────────────── -->
     <section class="pane active" id="pane-home">
@@ -404,8 +426,7 @@
 
     <!-- ── 7. Готово ─────────────────────────────────────────────────── -->
     <section class="pane" id="pane-finish">
-      <h1>Проверка и запуск</h1>
-      <p class="lead">Посмотрим, всё ли на месте, и можно отправлять.</p>
+      <p class="lead">Заберём снимки с телефона или внешнего диска и положим их сюда. Сначала проверим, всё ли на месте.</p>
 
       <div class="group">
         <div class="row"><div class="row-label"><b>Бот</b><small id="sumBotText">—</small></div><span class="pill" id="sumBot">—</span></div>
@@ -551,36 +572,25 @@
 
     <!-- ── Диск ──────────────────────────────────────────────────────── -->
     <section class="pane pane-wide" id="pane-drive">
-      <div class="drive-top">
-        <div class="drive-title">
-          <h1>Диск</h1>
-          <button class="chat-chip" id="driveChatChip" title="Где хранится диск">
-            <span class="chat-chip-avatar" id="driveChatAvatar"></span>
-            <span class="chat-chip-text" id="driveChatName">Не выбрано</span>
-            <svg class="chat-chip-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8.2 3.5 3.4 3.5-3.4"/></svg>
-          </button>
-        </div>
-        <div class="drive-actions">
-          <button class="btn btn-icon" id="driveNewFolder" title="Новая папка">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M11 11.4v4.2M8.9 13.5h4.2"/></svg>
-            <span>Новая папка</span>
-          </button>
-          <button class="btn btn-primary btn-icon" id="drivePickFiles">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
-            <span>Загрузить</span>
-          </button>
-          <input type="file" id="driveFileInput" multiple hidden>
-        </div>
+      <div class="drive-actions">
+        <button class="btn btn-icon" id="driveNewFolder" title="Новая папка">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M11 11.4v4.2M8.9 13.5h4.2"/></svg>
+          <span>Новая папка</span>
+        </button>
+        <button class="btn btn-primary btn-icon" id="drivePickFiles">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
+          <span>Загрузить</span>
+        </button>
+        <input type="file" id="driveFileInput" multiple hidden>
       </div>
 
       <div class="note blue" id="driveWhere" hidden>
-        <b>Выберите, где хранить диск</b>
-        Лучше отдельную приватную группу с темами: темы работают как папки, а к диску вы будете
-        давать доступ посторонним — в общем чате им были бы видны и ваши снимки.
+        <b>Диску нужен свой чат в Telegram</b>
+        Приватная группа с темами: темы работают как папки. Отдельная от снимков — потому что
+        к диску вы будете пускать посторонних, а снимки показывать им ни к чему.
         <div class="btn-row">
           <button class="btn btn-primary" id="driveCreate">Создать за меня</button>
-          <button class="btn" id="drivePick">Выбрать готовый</button>
-          <button class="btn" id="driveSameChat">Хранить со снимками</button>
+          <button class="btn" id="drivePick">У меня уже есть</button>
         </div>
       </div>
 
@@ -655,8 +665,7 @@
 
     <!-- ── Доступ ────────────────────────────────────────────────────── -->
     <section class="pane" id="pane-access">
-      <h1>Кому открыт доступ</h1>
-      <p class="lead">Ссылка-приглашение на диск с собственным сроком. Когда срок выходит, программа убирает человека из чата — <b>убирает, а не банит</b>: захотите — пустите снова по новой ссылке.</p>
+      <p class="lead" id="accessLead">Ссылка-приглашение с собственным сроком. Когда срок выходит, программа убирает человека из чата — <b>убирает, а не банит</b>: захотите — пустите снова по новой ссылке.</p>
 
       <div class="grid2" id="accessNumbers"></div>
 
@@ -712,8 +721,7 @@
 
     <!-- ── База ──────────────────────────────────────────────────────── -->
     <section class="pane" id="pane-archive">
-      <h1>База отправленного</h1>
-      <p class="lead">Это список всего, что уже ушло в Telegram. Программа заглядывает в него перед каждой отправкой, чтобы не прислать один и тот же снимок дважды — даже если вы подключите тот же диск через год.</p>
+      <p class="lead">Всё, что уже уехало в Telegram. Программа заглядывает сюда перед каждой отправкой, чтобы не прислать один и тот же снимок дважды — даже если вы подключите тот же диск через год.</p>
 
       <div class="grid2" id="archiveNumbers"></div>
 

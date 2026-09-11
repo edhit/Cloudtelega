@@ -311,42 +311,65 @@ async function receiveUpload(req, res, url) {
 }
 
 /**
- * Как называется чат диска. Числовой id человеку ничего не говорит, поэтому
+ * Как называется чат. Числовой id человеку ничего не говорит, поэтому
  * спрашиваем у Telegram название и аватар и запоминаем их в профиле:
  * при следующем открытии панель не ждёт сети.
+ *
+ * Помним про все чаты сразу: у диска свой, у снимков свой, и шапка каждого
+ * хранилища показывает название своего.
  */
-async function refreshDriveChat() {
-  const chatId = driveOverview().chatId;
+async function rememberChat(chatId) {
   if (!chatId || !botConfigured()) return null;
+  const id = String(chatId);
 
   try {
-    const chat = await getChat(chatId);
+    const chat = await getChat(id);
     const info = {
-      id: String(chatId),
-      title: chat.title ?? chat.username ?? String(chatId),
+      id,
+      title: chat.title ?? chat.username ?? id,
       photo: chat.photo?.small_file_id ?? null,
       isForum: Boolean(chat.is_forum),
       type: chat.type,
     };
-    writeProfileStore({ driveChat: info });
+    writeProfileStore({ chats: { ...readProfileStore().chats, [id]: info } });
     return info;
   } catch {
-    return readProfileStore().driveChat ?? null;
+    return readProfileStore().chats?.[id] ?? null;
   }
 }
 
-/** То, что уже известно про чат диска, без похода в сеть. */
-function knownDriveChat() {
-  const chatId = driveOverview().chatId;
+/** То, что уже известно про чат, без похода в сеть. */
+function knownChat(chatId) {
   if (!chatId) return null;
-  const saved = readProfileStore().driveChat;
-  if (saved?.id === String(chatId)) return saved;
-  // Диск лежит в чате снимков — название у него уже есть
-  if (String(chatId) === String(config.chatId)) {
-    const title = readProfileStore().chatTitle;
-    if (title) return { id: String(chatId), title, photo: null };
+  const id = String(chatId);
+  const store = readProfileStore();
+
+  const saved = store.chats?.[id] ?? (store.driveChat?.id === id ? store.driveChat : null);
+  if (saved) return saved;
+  // Про чат снимков название знали и раньше — до того, как завели общий список
+  if (id === String(config.chatId) && store.chatTitle) return { id, title: store.chatTitle, photo: null };
+  return { id, title: '', photo: null };
+}
+
+/** Названия всех чатов, которые сейчас используются хранилищами. */
+function storageChats() {
+  const out = {};
+  for (const id of [config.chatId, config.driveChatId]) {
+    if (id) out[String(id)] = knownChat(id);
   }
-  return { id: String(chatId), title: '', photo: null };
+  return out;
+}
+
+/**
+ * Дотягивает названия чатов, которых ещё не знаем. Чат мог попасть в .env
+ * руками, минуя выбор в окне, — тогда спросить Telegram больше некому.
+ * Ходим в сеть только за незнакомыми, поэтому обычное открытие страницы
+ * никуда не ходит вовсе.
+ */
+async function ensureChatNames() {
+  for (const id of [config.chatId, config.driveChatId]) {
+    if (id && !knownChat(id).title) await rememberChat(id).catch(() => null);
+  }
 }
 
 /** Страница диска: сводка плюс порция записей со ссылками на сообщения. */
@@ -363,9 +386,11 @@ function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) 
   });
   return {
     ...driveOverview(),
-    ...driveFolders(),
+    // Подпапки берём той папки, в которой стоим, — иначе в «Договорах»
+    // показывался бы весь корень диска
+    ...driveFolders(inFolder ?? ''),
     ...page,
-    chat: knownDriveChat(),
+    chat: knownChat(driveOverview().chatId),
     folder: inFolder,
     rows: withLinks(page.rows),
   };
@@ -509,6 +534,8 @@ const mask = (value, tail = 4) =>
   !value ? '' : `${'•'.repeat(Math.max(0, Math.min(12, value.length - tail)))}${value.slice(-tail)}`;
 
 async function buildState() {
+  await ensureChatNames();
+
   const state = {
     envPath: envPath(),
     envExists: envExists(),
@@ -544,6 +571,7 @@ async function buildState() {
         return { id, name: known?.name ?? 'Владелец', username: known?.username ?? null };
       }),
       chatTitle: readProfileStore().chatTitle ?? '',
+      chats: storageChats(),
       sendDelayMs: config.sendDelayMs,
       driveChatId: config.driveChatId,
       driveFolders: config.driveFolders,
@@ -820,7 +848,8 @@ const routes = {
     // Токен и список владельцев мог измениться — бот подхватывает их сразу
     if (patch.TELEGRAM_BOT_TOKEN !== undefined || patch.TELEGRAM_ADMIN_IDS !== undefined) refreshBot();
     // Сменили чат диска — узнаём, как он называется
-    if (patch.DRIVE_CHAT_ID !== undefined) await refreshDriveChat();
+    if (patch.DRIVE_CHAT_ID !== undefined) await rememberChat(config.driveChatId);
+    if (patch.TELEGRAM_CHAT_ID !== undefined) await rememberChat(config.chatId);
     return buildState();
   },
 
@@ -863,11 +892,11 @@ const routes = {
 
   'POST /api/drive/remove': async (body) => removeFromDrive(Number(body?.id)),
 
-  'GET /api/drive/folders': async () => driveFolders(),
+  'POST /api/drive/folders': async (body) => driveFolders(body?.parent ?? ''),
 
   'POST /api/drive/folder': async (body) => {
-    const created = await createFolder(body?.name);
-    return { created, ...driveFolders() };
+    const created = await createFolder(body?.name, body?.parent ?? '');
+    return { created, ...driveFolders(created.path.split('/').slice(0, -1).join('/')) };
   },
 
   'POST /api/drive/move': async (body) => {
@@ -877,37 +906,44 @@ const routes = {
 
   /* ── доступ к диску ─────────────────────────────────────────────────── */
 
-  'GET /api/access': async () => accessOverview(),
+  // Доступ всегда спрашивают про конкретное хранилище: «пустить в диск»
+  // и «пустить в снимки» — это разные чаты и разные списки гостей
+  'POST /api/access': async (body) => accessOverview(body?.chatId),
 
   'POST /api/access/link': async (body) => {
     const invite = await createAccessLink({
+      chatId: body?.chatId,
       name: body?.name ? String(body.name).slice(0, 32) : undefined,
       accessPreset: body?.preset ?? 'week',
       linkHours: body?.linkHours === null ? null : Number(body?.linkHours) || 48,
       memberLimit: body?.memberLimit === null ? null : Number(body?.memberLimit) || 1,
       joinRequest: Boolean(body?.joinRequest),
     });
-    return { invite, ...(await accessOverview()) };
+    return { invite, ...(await accessOverview(body?.chatId)) };
   },
 
   'POST /api/access/revoke': async (body) => {
     await revokeAccessLink(String(body?.link ?? ''));
-    return accessOverview();
+    return accessOverview(body?.chatId);
   },
 
   'POST /api/access/kick': async (body) => {
-    await removeGuest(String(body?.userId ?? ''));
-    return accessOverview();
+    await removeGuest(String(body?.userId ?? ''), body?.chatId ? String(body.chatId) : undefined);
+    return accessOverview(body?.chatId);
   },
 
   'POST /api/access/extend': async (body) => {
-    extendGuest(String(body?.userId ?? ''), body?.preset === 'forever' ? null : presetHours(body?.preset ?? 'week'));
-    return accessOverview();
+    extendGuest(
+      String(body?.userId ?? ''),
+      body?.preset === 'forever' ? null : presetHours(body?.preset ?? 'week'),
+      body?.chatId ? String(body.chatId) : undefined,
+    );
+    return accessOverview(body?.chatId);
   },
 
-  'POST /api/access/sweep': async () => {
+  'POST /api/access/sweep': async (body) => {
     const r = await expireGuests();
-    return { ...r, ...(await accessOverview()) };
+    return { ...r, ...(await accessOverview(body?.chatId)) };
   },
 
   'POST /api/checks': async () => runChecks(),

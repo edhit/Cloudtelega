@@ -39,7 +39,25 @@ export function presetHours(id) {
   return preset.hours;
 }
 
-/** Куда пускаем: у диска свой чат, если он задан, иначе общий. */
+/**
+ * Хранилища, к которым вообще можно кого-то пустить. Их два, и у каждого
+ * свой чат: диск и архив снимков. Если чат один на двоих, хранилище тоже
+ * одно — пускать «в диск, но не в снимки» в таком чате невозможно,
+ * и обещать этого нельзя.
+ */
+export function shareTargets() {
+  const out = [];
+  if (config.driveChatId) out.push({ id: 'drive', chatId: String(config.driveChatId), title: 'Диск' });
+  if (config.chatId && String(config.chatId) !== String(config.driveChatId)) {
+    out.push({ id: 'photos', chatId: String(config.chatId), title: 'Фотоархив' });
+  }
+  if (!out.length && config.chatId) {
+    out.push({ id: 'both', chatId: String(config.chatId), title: 'Диск и снимки' });
+  }
+  return out;
+}
+
+/** Куда пускаем по умолчанию: у диска свой чат, если он задан, иначе общий. */
 export function shareChatId() {
   return config.driveChatId || config.chatId;
 }
@@ -50,6 +68,7 @@ export function shareChatId() {
  *          linkHours?:number|null, memberLimit?:number|null, joinRequest?:boolean}} opts
  */
 export async function createAccessLink({
+  chatId: wantChat,
   name,
   accessPreset = 'week',
   accessHours,
@@ -57,7 +76,7 @@ export async function createAccessLink({
   memberLimit = 1,
   joinRequest = false,
 } = {}) {
-  const chatId = shareChatId();
+  const chatId = wantChat ? String(wantChat) : shareChatId();
   if (!chatId) throw new Error('Не выбран чат для диска — укажите его на шаге «Диск»');
 
   const access = accessHours === undefined ? presetHours(accessPreset) : accessHours;
@@ -206,8 +225,8 @@ export function timeLeft(expiresAt) {
 }
 
 /** Всё для панели доступа: ссылки, гости, сколько всего участников в чате. */
-export async function accessOverview() {
-  const chatId = shareChatId();
+export async function accessOverview(wantChat) {
+  const chatId = wantChat ? String(wantChat) : shareChatId();
   const invites = listInvites({ chatId }).map((i) => ({
     ...i,
     accessLabel: describeAccess(i.access_ms ? i.access_ms / HOUR : null),
@@ -224,7 +243,7 @@ export async function accessOverview() {
   let members = null;
   if (chatId) members = await getChatMemberCount(chatId).catch(() => null);
 
-  return { chatId, invites, guests, members, presets: ACCESS_PRESETS };
+  return { chatId, invites, guests, members, presets: ACCESS_PRESETS, targets: shareTargets() };
 }
 
 /** Короткая сводка для бота. */

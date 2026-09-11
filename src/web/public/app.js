@@ -256,11 +256,21 @@ function pill(el, status, text) {
   el.textContent = text;
 }
 
+/**
+ * Выполняет действие кнопки и не даёт нажать её второй раз, пока идёт работа.
+ *
+ * Текст «Секунду…» подставляем только там, где внутри кнопки один текст:
+ * у кнопки со значком внутри лежат svg и span, и подмена textContent их
+ * молча убила бы — вместе с id, по которым потом ищут эти элементы.
+ * Такой кнопке просто вешаем класс, а вид ей меняет таблица стилей.
+ */
 async function guard(button, fn) {
-  const label = button?.textContent;
+  const plain = button && !button.firstElementChild;
+  const label = plain ? button.textContent : null;
   if (button) {
     button.disabled = true;
-    button.textContent = 'Секунду…';
+    button.classList.add('busy');
+    if (plain) button.textContent = 'Секунду…';
   }
   try {
     await fn();
@@ -269,7 +279,8 @@ async function guard(button, fn) {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = label;
+      button.classList.remove('busy');
+      if (plain) button.textContent = label;
     }
   }
 }
@@ -301,8 +312,12 @@ const SETUP_PANES = new Set(['start', 'bot', 'account', 'chat', 'folders', 'pref
 function show(pane) {
   if (SETUP_PANES.has(pane)) openSetup();
   $$('.pane').forEach((p) => p.classList.toggle('active', p.id === `pane-${pane}`));
-  $$('#nav button, #navExtra button, #navApps button').forEach((b) =>
-    b.setAttribute('aria-current', String(b.dataset.pane === pane)));
+  renderStorageHead(pane);
+
+  // В боковом меню подсвечивается хранилище, а не отдельная вкладка внутри него
+  const navPane = PANE_OWNER.get(pane) ?? (pane === 'access' ? openStorage : pane);
+  $$('#nav button, #navExtra button, #navApps button, #navHome button').forEach((b) =>
+    b.setAttribute('aria-current', String(b.dataset.pane === navPane)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (pane === 'finish') runChecks();
   if (pane === 'archive') loadArchive();
@@ -350,6 +365,12 @@ const APPS = [
     about: 'Любые файлы: документы, архивы, музыка. Папками и с поиском.',
     tint: '#007aff',
     icon: '<path d="M6.6 17.4a3.9 3.9 0 0 1-.4-7.8 4.9 4.9 0 0 1 9.4-1.2 3.5 3.5 0 0 1 .3 7H6.6Z"/><path d="M11 14.4V9.6"/><path d="m8.9 11.5 2.1-2 2.1 2"/>',
+    // Чат хранилища: диску можно отвести свой, иначе он делит чат со снимками
+    chat: () => state?.settings.driveChatId || state?.settings.chatId,
+    tabs: [
+      { pane: 'drive', label: 'Файлы' },
+      { pane: 'access', label: 'Кто имеет доступ' },
+    ],
     ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
     stat: () => (home?.drive?.files ? `${home.drive.files} файлов · ${humanSize(home.drive.bytes)}` : 'Пусто — перетащите файлы'),
   },
@@ -359,28 +380,94 @@ const APPS = [
     about: 'Снимки с телефона и дисков — по годам, без повторов.',
     tint: '#34c759',
     icon: '<rect x="3" y="5.6" width="16" height="11.4" rx="2.4"/><circle cx="11" cy="11.3" r="3"/><path d="M7.4 5.6l1-1.8h5.2l1 1.8"/>',
+    chat: () => state?.settings.chatId,
+    tabs: [
+      { pane: 'archive', label: 'Снимки' },
+      { pane: 'finish', label: 'Загрузить с телефона или диска' },
+      { pane: 'access', label: 'Кто имеет доступ' },
+    ],
     ready: () => Boolean(state?.settings.chatId),
     stat: () => (home?.photos?.n ? `${home.photos.n} снимков · ${humanSize(home.photos.bytes)}` : 'Пока пусто'),
   },
-  {
-    id: 'access',
-    title: 'Доступ',
-    about: 'Ссылки на диск со сроком. Время вышло — гостя убирают.',
-    tint: '#ff9500',
-    icon: '<circle cx="8.6" cy="8" r="2.7"/><path d="M3.6 17.4a5 5 0 0 1 10 0"/><path d="M14.6 5.6a2.7 2.7 0 0 1 0 5.2"/><path d="M16.2 13.2a5 5 0 0 1 2.2 4.2"/>',
-    ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
-    stat: () => (home?.access?.guests ? `${home.access.guests} гостей внутри` : 'Никого не пускали'),
-  },
-  {
-    id: 'finish',
-    title: 'Отправка',
-    about: 'Залить всё новое с диска или телефона и следить за ходом.',
-    tint: '#af52de',
-    icon: '<path d="M11 15.4V4.6"/><path d="m6.8 8.8 4.2-4.2 4.2 4.2"/><path d="M4.4 14.6v1.8a2 2 0 0 0 2 2h9.2a2 2 0 0 0 2-2v-1.8"/>',
-    ready: () => Boolean(state?.settings.chatId && state?.settings.scanPaths?.length),
-    stat: () => (state?.job?.running ? 'Сейчас идёт' : 'Готово к запуску'),
-  },
 ];
+
+/* ── хранилища и их вкладки ──────────────────────────────────────────────── */
+
+// Какая панель какому хранилищу принадлежит. Панель доступа общая: она
+// показывает то хранилище, которое сейчас открыто.
+const PANE_OWNER = new Map();
+for (const app of APPS) for (const tab of app.tabs) if (tab.pane !== 'access') PANE_OWNER.set(tab.pane, app.id);
+
+let openStorage = 'drive';
+
+const storageById = (id) => APPS.find((a) => a.id === id);
+
+/** Чат открытого сейчас хранилища — по нему спрашиваем и раздаём доступ. */
+function activeStorageChat() {
+  return storageById(openStorage)?.chat() ?? null;
+}
+
+/** Шапка хранилища: значок, название, чат и вкладки. */
+function renderStorageHead(pane) {
+  const owner = PANE_OWNER.get(pane) ?? (pane === 'access' ? openStorage : null);
+  const head = $('#storageHead');
+  if (!owner) {
+    head.hidden = true;
+    return;
+  }
+
+  openStorage = owner;
+  const app = storageById(owner);
+  head.hidden = false;
+
+  $('#storageIcon').style.setProperty('--tint', app.tint);
+  $('#storageIcon').innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true">${app.icon}</svg>`;
+  $('#storageName').textContent = app.title;
+
+  const tabs = $('#storageTabs');
+  tabs.innerHTML = '';
+  for (const tab of app.tabs) {
+    const btn = document.createElement('button');
+    btn.textContent = tab.label;
+    btn.setAttribute('aria-current', String(tab.pane === pane));
+    btn.addEventListener('click', () => show(tab.pane));
+    tabs.append(btn);
+  }
+
+  renderStorageChat(app);
+}
+
+/** Чат хранилища — названием и аватаром: числовой id людям ничего не говорит. */
+function renderStorageChat(app) {
+  const chatId = app.chat();
+  const name = $('#storageChatName');
+  const avatar = $('#storageChatAvatar');
+  const chip = $('#storageChat');
+
+  avatar.querySelector('img')?.remove();
+  if (!chatId) {
+    name.textContent = 'Выбрать чат в Telegram';
+    avatar.textContent = '?';
+    avatar.style.setProperty('--h', 210);
+    chip.title = 'Хранилище ещё не привязано к чату';
+    return;
+  }
+
+  // Названия чатов сервер держит наготове, поэтому шапка не ждёт сети
+  const known = state?.settings.chats?.[String(chatId)]
+    ?? (app.id === 'drive' ? driveChatInfo : null);
+  const title = known?.title || 'Чат в Telegram';
+  name.textContent = title;
+  chip.title = 'Здесь это хранилище лежит в Telegram';
+  avatar.style.setProperty('--h', hueOf(String(chatId)));
+  avatar.textContent = title.slice(0, 1);
+  if (known?.photo) {
+    const img = document.createElement('img');
+    img.src = `/api/chat-photo?file=${encodeURIComponent(known.photo)}`;
+    img.alt = '';
+    avatar.append(img);
+  }
+}
 
 function appIcon(app) {
   const span = document.createElement('span');
@@ -390,11 +477,20 @@ function appIcon(app) {
   return span;
 }
 
-function renderAppNav() {
-  const list = $('#navApps');
-  list.innerHTML = '';
+const HOME_ITEM = {
+  id: 'home',
+  title: 'Главная',
+  icon: '<path d="M4 9.6 11 4l7 5.6v7.2a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 16.8V9.6Z"/><path d="M9 18.4v-5.2h4v5.2"/>',
+};
 
-  const items = [{ id: 'home', title: 'Главная', icon: '<path d="M4 9.6 11 4l7 5.6v7.2a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 16.8V9.6Z"/><path d="M9 18.4v-5.2h4v5.2"/>' }, ...APPS];
+function renderAppNav() {
+  // «Главная» — не хранилище, поэтому живёт над разделом, а не внутри него
+  renderNavList($('#navHome'), [HOME_ITEM]);
+  renderNavList($('#navApps'), APPS);
+}
+
+function renderNavList(list, items) {
+  list.innerHTML = '';
   for (const app of items) {
     const li = document.createElement('li');
     const btn = document.createElement('button');
@@ -1872,7 +1968,8 @@ async function loadDrive({ append = false } = {}) {
   drive.total = data.total;
 
   $('#driveWhere').hidden = Boolean(data.chatId);
-  renderDriveChat(data);
+  driveChatInfo = data.chat ?? null;
+  renderStorageChat(storageById('drive'));
   $('#driveFolders').checked = data.folders;
 
   renderCrumbs();
@@ -1884,39 +1981,8 @@ async function loadDrive({ append = false } = {}) {
   if (!append) renderDriveQueue();
 }
 
-/** Чат диска показываем названием и аватаром: числовой id людям ничего не говорит. */
-function renderDriveChat(data) {
-  const chip = $('#driveChatChip');
-  const avatar = $('#driveChatAvatar');
-  const name = $('#driveChatName');
-
-  if (!data.chatId) {
-    chip.hidden = false;
-    name.textContent = 'Выбрать, где хранить';
-    avatar.textContent = '?';
-    avatar.style.setProperty('--h', 210);
-    avatar.querySelector('img')?.remove();
-    chip.title = 'Диск ещё не привязан к чату';
-    return;
-  }
-
-  const title = data.chat?.title || 'Мой диск';
-  name.textContent = title;
-  chip.title = data.separateChat
-    ? 'Отдельный чат — ваши снимки гостям не видны'
-    : 'Тот же чат, что и у снимков';
-
-  avatar.style.setProperty('--h', hueOf(String(data.chatId)));
-  avatar.textContent = title.slice(0, 1);
-  avatar.querySelector('img')?.remove();
-  if (data.chat?.photo) {
-    const img = document.createElement('img');
-    img.src = `/api/chat-photo?file=${encodeURIComponent(data.chat.photo)}`;
-    img.alt = '';
-    img.addEventListener('error', () => img.remove());
-    avatar.append(img);
-  }
-}
+// Что известно про чат диска — этим же пользуется шапка хранилища
+let driveChatInfo = null;
 
 function renderCrumbs() {
   const box = $('#driveCrumbs');
@@ -1930,26 +1996,33 @@ function renderCrumbs() {
     return;
   }
 
-  // В корне «Диск» уже написан заголовком — повторять его крошкой незачем
-  const rootBtn = document.createElement('button');
-  rootBtn.textContent = 'Все файлы';
-  rootBtn.addEventListener('click', () => guard(null, () => openFolder('')));
-
-  if (!drive.folder) {
-    const here = document.createElement('span');
-    here.className = 'crumb-current';
-    here.textContent = 'Все файлы';
-    box.append(here);
-    return;
+  // Папка хранится путём «Договоры/2026/Аренда» — крошки разбирают его
+  // по звеньям, и каждое звено кликабельно, кроме последнего
+  const parts = drive.folder ? drive.folder.split('/') : [];
+  const crumbs = [{ label: 'Все файлы', path: '' }];
+  for (const [i, part] of parts.entries()) {
+    crumbs.push({ label: part, path: parts.slice(0, i + 1).join('/') });
   }
 
-  const sep = document.createElement('span');
-  sep.className = 'crumb-sep';
-  sep.textContent = '›';
-  const here = document.createElement('span');
-  here.className = 'crumb-current';
-  here.textContent = drive.folder;
-  box.append(rootBtn, sep, here);
+  for (const [i, crumb] of crumbs.entries()) {
+    if (i) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep';
+      sep.textContent = '›';
+      box.append(sep);
+    }
+    if (i === crumbs.length - 1) {
+      const here = document.createElement('span');
+      here.className = 'crumb-current';
+      here.textContent = crumb.label;
+      box.append(here);
+    } else {
+      const btn = document.createElement('button');
+      btn.textContent = crumb.label;
+      btn.addEventListener('click', () => guard(null, () => openFolder(crumb.path)));
+      box.append(btn);
+    }
+  }
 }
 
 function renderDriveBody(data, append) {
@@ -1959,8 +2032,9 @@ function renderDriveBody(data, append) {
   const list = document.createElement('div');
   list.className = drive.view === 'grid' ? 'files' : 'files-list';
 
-  // Папки показываем только в корне и только когда не ищем
-  if (!append && !drive.query && !drive.folder) {
+  // Подпапки идут первыми на любом уровне — иначе вложенная папка была бы
+  // создана, но не видна. При поиске папок нет: ищем по файлам всего диска
+  if (!append && !drive.query) {
     for (const folder of data.list ?? []) list.append(folderCard(folder));
   }
 
@@ -1992,14 +2066,18 @@ function folderCard(folder) {
   name.className = 'file-name';
   name.textContent = folder.name;
 
+  // Считаем всё, что внутри, вместе с вложенными папками: от папки
+  // «Договоры» человек ждёт числа всех договоров, а не только верхних
+  const parts = [];
+  if (folder.folders) parts.push(`${folder.folders} ${plural(folder.folders, 'папка', 'папки', 'папок')}`);
+  if (folder.n) parts.push(`${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')} · ${humanSize(folder.bytes)}`);
+
   const sub = document.createElement('span');
   sub.className = 'file-sub';
-  sub.textContent = folder.n
-    ? `${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')} · ${humanSize(folder.bytes)}`
-    : 'пусто';
+  sub.textContent = parts.join(' · ') || 'пусто';
 
   card.append(fileGlyph(folder.name, { folder: true }), name, sub);
-  card.addEventListener('click', () => guard(null, () => openFolder(folder.name)));
+  card.addEventListener('click', () => guard(null, () => openFolder(folder.path)));
   return card;
 }
 
@@ -2275,15 +2353,18 @@ function uploadRow(name, size) {
 
 /* ── папки, поиск, вид ───────────────────────────────────────────────────── */
 
-$('#driveNewFolder').addEventListener('click', (e) => guard(e.target, async () => {
+$('#driveNewFolder').addEventListener('click', (e) => guard(e.target.closest('button'), async () => {
+  // Папку заводим там, где человек сейчас стоит: зашёл в «Договоры» —
+  // новая папка появится внутри «Договоров», а не в корне
+  const here = drive.folder;
   const name = await askText({
-    title: 'Новая папка',
+    title: here ? `Новая папка в «${here.split('/').at(-1)}»` : 'Новая папка',
     text: 'Папка на диске — это тема в чате Telegram, её будет видно и там.',
     placeholder: 'Например, Договоры',
     okText: 'Создать',
   });
   if (!name) return;
-  await api('/api/drive/folder', { name });
+  await api('/api/drive/folder', { name, parent: here });
   await loadDrive();
   toast(`Папка «${name}» создана`);
 }));
@@ -2365,7 +2446,12 @@ $('#driveFolders').addEventListener('change', () => guard(null, async () => {
   toast($('#driveFolders').checked ? 'Папки будут темами в чате' : 'Всё одной лентой');
 }));
 
-$('#driveChatChip').addEventListener('click', (e) => guard(e.target.closest('button'), pickDriveChat));
+// Чат меняют прямо из шапки хранилища — у каждого свой способ его выбрать
+$('#storageChat').addEventListener('click', (e) => guard(e.target.closest('button'), async () => {
+  if (openStorage === 'drive') return pickDriveChat();
+  show('chat');
+  toast('Чат для снимков выбирается на шаге «Куда складывать»');
+}));
 
 /** Один список: создать новую группу или взять уже существующую. */
 async function pickDriveChat() {
@@ -2377,20 +2463,26 @@ async function pickDriveChat() {
       sub: 'Приватная, с темами — программа сделает всё сама',
       art: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/><path d="M11 10.6v4.2M8.9 12.7h4.2"/>',
     },
-    ...chats.map((chat) => ({
-      id: chat.id,
-      label: chat.title,
-      sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : 'без тем',
-        String(chat.id) === String(state?.settings.chatId) ? 'здесь ваши снимки' : null].filter(Boolean).join(' · '),
-      photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
-    })),
+    // Чат со снимками здесь не предлагаем вовсе. Он уже занят фотоархивом:
+    // диск показывал бы там годовые темы как свои папки — пустые, потому что
+    // снимки лежат отдельно. Да и доступ к диску открыл бы заодно все снимки.
+    ...chats
+      .filter((chat) => String(chat.id) !== String(state?.settings.chatId))
+      .map((chat) => ({
+        id: chat.id,
+        label: chat.title,
+        sub: [chat.type === 'channel' ? 'канал' : 'группа', chat.isForum ? 'с темами' : 'без тем']
+          .filter(Boolean).join(' · '),
+        photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
+      })),
   ];
 
   const picked = await pickFromList({
     title: 'Где хранить диск',
-    text: 'Лучше отдельный чат от снимков: к диску вы будете давать доступ другим.',
+    text: 'Диску нужен свой чат, отдельный от снимков: к диску вы будете пускать посторонних, '
+      + 'а снимки показывать им ни к чему.',
     items,
-    empty: 'Пока нечего выбрать — создайте новую группу.',
+    empty: 'Подходящих чатов нет — создайте новую группу.',
   });
   if (!picked) return;
 
@@ -2419,14 +2511,6 @@ async function createDriveChat() {
   for (const w of created.warnings ?? []) toast(w, true);
 }
 
-$('#driveSameChat').addEventListener('click', (e) => guard(e.target, async () => {
-  if (!state?.settings.chatId) throw new Error('Сначала выберите чат для снимков на шаге 4');
-  await api('/api/settings', { DRIVE_CHAT_ID: state.settings.chatId });
-  await refresh();
-  await loadDrive();
-  toast('Диск будет храниться там же, где снимки');
-}));
-
 $('#drivePick').addEventListener('click', (e) => guard(e.target, pickDriveChat));
 $('#driveCreate').addEventListener('click', (e) => guard(e.target, createDriveChat));
 
@@ -2435,11 +2519,23 @@ $('#driveCreate').addEventListener('click', (e) => guard(e.target, createDriveCh
 let accessData = null;
 
 async function loadAccess() {
-  accessData = await api('/api/access').catch((err) => {
+  accessData = await api('/api/access', { chatId: activeStorageChat() }).catch((err) => {
     toast(err.message, true);
     return null;
   });
   if (!accessData) return;
+
+  // Человек должен видеть, куда именно он сейчас кого-то пускает
+  const lead = $('#accessLead');
+  lead.textContent = 'Кого вы пускаете в ';
+  const where = document.createElement('b');
+  where.textContent = storageById(openStorage)?.title ?? 'хранилище';
+  lead.append(
+    where,
+    '. Ссылка-приглашение со своим сроком: когда срок выходит, программа убирает человека из чата — ',
+    Object.assign(document.createElement('b'), { textContent: 'убирает, а не банит' }),
+    ': захотите — пустите снова по новой ссылке.',
+  );
 
   renderAccessPresets();
 
@@ -2503,7 +2599,7 @@ function renderAccessLinks() {
     revoke.className = 'btn btn-small btn-danger';
     revoke.textContent = 'Отозвать';
     revoke.addEventListener('click', () => guard(revoke, async () => {
-      accessData = await api('/api/access/revoke', { link: invite.link });
+      accessData = await api('/api/access/revoke', { link: invite.link, chatId: activeStorageChat() });
       renderAccessLinks();
       toast('Ссылка отозвана — по ней больше не войти');
     }));
@@ -2555,7 +2651,7 @@ function renderAccessGuests() {
         empty: '',
       });
       if (!picked) return;
-      accessData = await api('/api/access/extend', { userId: guest.user_id, preset: picked.id });
+      accessData = await api('/api/access/extend', { userId: guest.user_id, preset: picked.id, chatId: activeStorageChat() });
       renderAccessGuests();
       toast('Доступ продлён');
     }));
@@ -2572,7 +2668,7 @@ function renderAccessGuests() {
         danger: true,
       });
       if (!ok) return;
-      accessData = await api('/api/access/kick', { userId: guest.user_id });
+      accessData = await api('/api/access/kick', { userId: guest.user_id, chatId: activeStorageChat() });
       renderAccessGuests();
       toast('Доступ закрыт, человек не забанен');
     }));
@@ -2589,6 +2685,7 @@ $('#accessCreate').addEventListener('click', (e) => guard(e.target, async () => 
   const life = Number($('#segLinkLife input:checked')?.value ?? 48);
 
   const res = await api('/api/access/link', {
+    chatId: activeStorageChat(),
     name: $('#accessName').value.trim() || undefined,
     preset,
     memberLimit: limit || null,
@@ -2605,7 +2702,7 @@ $('#accessCreate').addEventListener('click', (e) => guard(e.target, async () => 
 }));
 
 $('#accessSweep').addEventListener('click', (e) => guard(e.target, async () => {
-  const r = await api('/api/access/sweep', {});
+  const r = await api('/api/access/sweep', { chatId: activeStorageChat() });
   accessData = r;
   renderAccessLinks();
   renderAccessGuests();

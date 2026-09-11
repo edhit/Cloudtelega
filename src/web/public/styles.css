@@ -102,6 +102,18 @@ html, body {
   width: 21px; height: 21px; color: #fff;
   fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
 }
+/* Кнопка занята: содержимое приглушаем и крутим точку — трогать разметку
+   кнопки нельзя, внутри у неё могут быть значки и вложенные элементы */
+.busy { position: relative; pointer-events: none; }
+.busy > * { opacity: 0.25; }
+.busy::after {
+  content: ''; position: absolute; inset: 0; margin: auto;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(1turn); } }
+
 .lock-mark { display: inline-grid; place-items: center; vertical-align: -2px; margin-right: 4px; }
 .lock-mark svg {
   width: 12px; height: 12px; color: var(--text-3);
@@ -698,6 +710,38 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
 .grid-cell .grid-caption small {
   font-size: 10.5px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── шапка открытого хранилища ───────────────────────────────────────────── */
+
+.storage-head { margin-bottom: 22px; }
+.storage-title { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; }
+.storage-title h1 { margin: 0 0 4px; }
+.storage-icon {
+  width: 46px; height: 46px; flex: none; border-radius: 13px;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--tint) 14%, transparent); color: var(--tint);
+}
+.storage-icon svg {
+  width: 25px; height: 25px;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* Вкладки хранилища: что внутри, как класть, кого пускаю */
+.tabs {
+  display: inline-flex; gap: 2px; flex-wrap: wrap; max-width: 100%;
+  padding: 3px; border-radius: 12px; background: var(--chip);
+}
+.tabs button {
+  border: 0; background: transparent; color: var(--text-2);
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  padding: 7px 14px; border-radius: 9px; cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s;
+}
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-current='true'] {
+  background: var(--panel); color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 /* ── главный экран: витрина приложений ───────────────────────────────────── */
