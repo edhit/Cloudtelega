@@ -468,7 +468,15 @@ function renderStorageChat(app) {
     ?? (app.id === 'drive' ? driveChatInfo : null);
   const title = known?.title || 'Чат в Telegram';
   name.textContent = title;
-  chip.title = 'Здесь это хранилище лежит в Telegram';
+
+  // Один чат на двоих — законно, но человек должен знать: тот, кого пустили
+  // на диск, увидит там и снимки. Молчать об этом нельзя
+  const shared = state?.settings.driveChatId
+    && String(state.settings.driveChatId) === String(state.settings.chatId);
+  chip.classList.toggle('shared', Boolean(shared));
+  chip.title = shared
+    ? 'Диск и снимки лежат в одном чате: кого пустите на диск, тот увидит и снимки'
+    : 'Здесь это хранилище лежит в Telegram';
   avatar.style.setProperty('--h', hueOf(String(chatId)));
   avatar.textContent = title.slice(0, 1);
   if (known?.photo) {
@@ -953,8 +961,10 @@ $('#createGroup').addEventListener('click', (e) => guard(e.target, async () => {
 $('#detectChat').addEventListener('click', (e) => guard(e.target, async () => {
   const picked = await pickStorageChat({
     title: 'Где хранить снимки',
-    text: 'Фотоархив личный: сюда уедут снимки с телефона и дисков. Чат, занятый диском, не предлагаю.',
+    text: 'Фотоархив личный: сюда уедут снимки с телефона и дисков. Чат, занятый диском, не предлагаю — '
+      + 'кроме того, в котором ваши снимки лежат уже сейчас.',
     busyChatId: state?.settings.driveChatId,
+    currentChatId: state?.settings.chatId,
     createLabel: 'Создать новую группу',
     createSub: 'Приватная, с темами — программа сделает всё сама',
   });
@@ -2585,16 +2595,31 @@ function chatSub(chat) {
   ].join(' · ');
 }
 
-async function pickStorageChat({ title, text, busyChatId, createLabel, createSub }) {
+/**
+ * @param {{busyChatId?:string, currentChatId?:string}} opts
+ *   busyChatId — чат соседнего хранилища, его прячем;
+ *   currentChatId — чат этого хранилища, его не прячем НИКОГДА.
+ *
+ * Второе важнее первого: если оба хранилища указывают на один чат, то чат,
+ * куда человек уже сложил свой архив, пропадал из собственного выбора — и
+ * выглядело это так, будто программа потеряла группу.
+ */
+async function pickStorageChat({ title, text, busyChatId, currentChatId, createLabel, createSub }) {
   const { chats } = await api('/api/detect-chats', {});
-  const free = chats.filter((chat) => !busyChatId || String(chat.id) !== String(busyChatId));
+  const mine = currentChatId ? String(currentChatId) : null;
+
+  const free = chats.filter((chat) => {
+    const id = String(chat.id);
+    if (mine && id === mine) return true;
+    return !busyChatId || id !== String(busyChatId);
+  });
 
   const items = [
     { id: '__new__', label: createLabel, sub: createSub, art: CREATE_ART },
     ...free.map((chat) => ({
       id: chat.id,
       label: chat.title,
-      sub: chatSub(chat),
+      sub: String(chat.id) === mine ? `${chatSub(chat)} · выбран сейчас` : chatSub(chat),
       photo: chat.photo ? `/api/chat-photo?file=${encodeURIComponent(chat.photo)}` : null,
       isForum: chat.isForum,
       type: chat.type,
@@ -2615,6 +2640,7 @@ async function pickDriveChat() {
     text: 'Диску нужен свой чат, отдельный от снимков: к диску вы будете пускать посторонних, '
       + 'а личные снимки показывать им ни к чему.',
     busyChatId: state?.settings.chatId,
+    currentChatId: state?.settings.driveChatId,
     createLabel: 'Создать новую группу',
     createSub: 'Приватная, с темами — программа сделает всё сама',
   });

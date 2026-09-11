@@ -692,11 +692,14 @@ async function detectChats() {
     });
   }
 
-  // Уже выбранная группа в списке нужна всегда — даже если писать в неё давно перестали
-  if (config.chatId && !found.has(String(config.chatId))) {
-    found.set(String(config.chatId), {
-      id: String(config.chatId),
-      title: readProfileStore().chatTitle || String(config.chatId),
+  // Уже выбранные чаты в списке нужны всегда — и чат снимков, и чат диска.
+  // Писать в группу могли последний раз год назад, а архив в ней живой:
+  // пропасть из списка она не должна ни при каких обстоятельствах
+  for (const id of [config.chatId, config.driveChatId]) {
+    if (!id || found.has(String(id))) continue;
+    found.set(String(id), {
+      id: String(id),
+      title: knownChat(id).title || String(id),
       type: 'supergroup',
       isForum: false,
     });

@@ -712,6 +712,12 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Диск и снимки в одном чате — предупреждаем цветом, а не молчим */
+.chat-chip.shared {
+  background: color-mix(in srgb, var(--orange, #ff9500) 16%, transparent);
+  color: color-mix(in srgb, var(--orange, #ff9500) 75%, var(--text));
+}
+
 /* ── шапка открытого хранилища ───────────────────────────────────────────── */
 
 .storage-head { margin-bottom: 22px; }
