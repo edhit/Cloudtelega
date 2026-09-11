@@ -229,6 +229,26 @@ export async function createForumTopicViaBot(title, chatId = config.chatId) {
   return result.message_thread_id;
 }
 
+/**
+ * Удаляет тему вместе со всеми сообщениями в ней. Telegram отдельной «корзины»
+ * для темы не держит: удаление необратимо, поэтому наверху обязательно
+ * спрашиваем подтверждение.
+ */
+export async function deleteForumTopic(topicId, chatId = config.chatId) {
+  await call('deleteForumTopic', { chat_id: chatId, message_thread_id: topicId });
+  return true;
+}
+
+/** Меняет подпись у уже отправленного файла — так живут заметки к файлам. */
+export async function editMessageCaption(chatId, messageId, caption, extra = {}) {
+  return call('editMessageCaption', {
+    chat_id: chatId,
+    message_id: messageId,
+    caption,
+    ...extra,
+  });
+}
+
 /* ── переписка с ботом (режим команд) ────────────────────────────────────── */
 
 export async function sendMessage(chatId, text, extra = {}) {

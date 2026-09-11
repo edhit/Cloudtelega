@@ -13,6 +13,7 @@ import { collect, isRunning, requestStop, runSend, sendState } from './pipeline.
 import { messageLink } from './links.js';
 import { cleanupStrayLiveVideos, describeStray } from './cleanup.js';
 import { accessOverview, createAccessLink, expireGuests, noteJoin, removeGuest, timeLeft } from './sharing.js';
+import { ingestUpdates } from './ingest.js';
 import { driveOverview } from './drive.js';
 import {
   copyMessage, editMessageText, getUpdates, sendByFileId, sendLivePhotoByFileId,
@@ -573,6 +574,15 @@ export async function runBot({ greet = true } = {}) {
         log.warn(`Бот не смог получить команды: ${describeError(err, { kind: 'bot' })}`);
         await new Promise((r) => setTimeout(r, 3000));
         continue;
+      }
+
+      // Файлы, выложенные в чат диска прямо из Telegram, забираем в базу:
+      // иначе список в окне и содержимое чата расходятся
+      try {
+        const added = ingestUpdates(updates);
+        if (added) log.ok(`Из чата подхвачено файлов: ${added}`);
+      } catch (err) {
+        log.warn(`Подхват файлов из чата не удался: ${describeError(err)}`);
       }
 
       for (const update of updates) {

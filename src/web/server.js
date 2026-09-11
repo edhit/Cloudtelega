@@ -20,13 +20,14 @@ import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline
 import { summarizeUnreadable } from '../scanner.js';
 import {
   createFolder, driveOverview, folders as driveFolders, getFileBack, moveFile,
-  putMany, putUploaded, removeFromDrive,
+  putMany, putUploaded, removeFolder, removeFromDrive, setNote,
 } from '../drive.js';
 import {
   accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
   removeGuest, revokeAccessLink,
 } from '../sharing.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
+import { publishSnapshot, pullSnapshot, syncState, syncTargets } from '../sync.js';
 import {
   botConfigured, fileUrl, getChat, getChatMember, getFilePath, getMe, getUpdates, sendMessageWithToken,
 } from '../telegram/botApi.js';
@@ -262,10 +263,11 @@ async function startSend() {
     },
   })
     .catch(failJob)
-    .finally(() => {
+    .finally(async () => {
       unmirror();
       job.mode = null;
       job.finished = 'send';
+      await refreshSharedList('photos');
     });
 }
 
@@ -396,6 +398,21 @@ function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) 
   };
 }
 
+/**
+ * Держит общий список свежим после отправки. Сам собой список не заводится:
+ * пока человек ни разу не выложил его вручную, мы не решаем за него, что
+ * содержимое его архива можно показывать всем в чате.
+ */
+async function refreshSharedList(storage) {
+  if (!syncState(storage)?.messageId) return;
+  try {
+    const r = await publishSnapshot(storage);
+    note(`Общий список обновлён: ${r.rows} ${r.rows === 1 ? 'запись' : 'записей'}`, 'ok');
+  } catch (err) {
+    note(`Общий список обновить не вышло: ${describeError(err, { kind: 'bot' })}`, 'warn');
+  }
+}
+
 /** Загрузка на диск — та же фоновая работа, что скан и отправка. */
 async function startDriveUpload(paths, folder) {
   if (job.mode || isRunning()) throw new Error('Уже идёт другая операция');
@@ -428,10 +445,11 @@ async function startDriveUpload(paths, folder) {
     },
   })
     .catch(failJob)
-    .finally(() => {
+    .finally(async () => {
       unmirror();
       job.mode = null;
       job.finished = 'drive';
+      await refreshSharedList('drive');
     });
 }
 
@@ -897,6 +915,34 @@ const routes = {
   'POST /api/drive/folder': async (body) => {
     const created = await createFolder(body?.name, body?.parent ?? '');
     return { created, ...driveFolders(created.path.split('/').slice(0, -1).join('/')) };
+  },
+
+  /* ── общий список для совместной работы ─────────────────────────────── */
+
+  'POST /api/sync': async (body) => {
+    const id = String(body?.storage ?? 'drive');
+    return { ...syncState(id), targets: syncTargets() };
+  },
+
+  'POST /api/sync/publish': async (body) => {
+    const r = await publishSnapshot(String(body?.storage ?? 'drive'));
+    return { ...r, ...syncState(String(body?.storage ?? 'drive')) };
+  },
+
+  'POST /api/sync/pull': async (body) => {
+    const id = String(body?.storage ?? 'drive');
+    const r = await pullSnapshot(id, body?.messageId);
+    return { ...r, ...syncState(id) };
+  },
+
+  'POST /api/drive/note': async (body) => {
+    await setNote(Number(body?.id), body?.note ?? '');
+    return drivePage({ folder: body?.from || null });
+  },
+
+  'POST /api/drive/remove-folder': async (body) => {
+    const r = await removeFolder(String(body?.path ?? ''));
+    return { removed: r, ...drivePage({ folder: body?.from || null }) };
   },
 
   'POST /api/drive/move': async (body) => {

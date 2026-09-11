@@ -16,14 +16,16 @@ import { config } from './config.js';
 import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import {
-  driveRootCount, driveStats, fileById, findByHash, listDriveFolders,
-  markFailed, markSent, setFileFolder, upsertPending,
+  driveRootCount, driveStats, dropFolder, fileById, findByHash, listDriveFolders,
+  markFailed, markSent, putTopic, setFileFolder, setFileNote, upsertPending,
 } from './db.js';
 import { sha256Cached } from './hash.js';
 import { extOf, kindOf, mimeOf } from './media.js';
 import { normalizeStem } from './naming.js';
 import { messageLink } from './links.js';
-import { botConfigured, deleteMessage, sendFileViaBot } from './telegram/botApi.js';
+import {
+  botConfigured, deleteForumTopic, deleteMessage, editMessageCaption, sendFileViaBot,
+} from './telegram/botApi.js';
 import { downloadMessageFile, mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
 import { resolveTopic } from './telegram/topics.js';
 import { BOT_UPLOAD_LIMIT } from './config.js';
@@ -115,11 +117,60 @@ export async function createFolder(raw, parent = '') {
   const full = cleanFolderPath(parent ? `${cleanFolderPath(parent)}/${cleanFolderName(raw)}` : raw);
   const chatId = driveChatId();
   if (!chatId) throw new Error('Не выбран чат для диска');
-  if (!config.driveFolders) throw new Error('Папки выключены — включите «Папки — темами» на панели диска');
 
-  const topicId = await resolveTopic(topicNameFor(full), chatId, { key: full, bucket: BUCKET });
-  log.ok(`Папка «${full}» готова (тема ${topicId})`);
+  // Папка живёт в базе в любом случае — путь лежит прямо в записи файла.
+  // Тема в Telegram лишь делает её видимой и в самом чате; в канале тем
+  // не бывает вовсе, и это не повод оставлять человека без папок.
+  let topicId = 0;
+  if (config.driveFolders) {
+    try {
+      topicId = await resolveTopic(topicNameFor(full), chatId, { key: full, bucket: BUCKET });
+    } catch (err) {
+      log.warn(`Тему для «${full}» завести не вышло (${describeError(err, { kind: 'bot' })}) — папка останется только в программе`);
+    }
+  }
+  if (!topicId) putTopic(chatId, full, 0, full, BUCKET);
+
+  log.ok(topicId ? `Папка «${full}» готова (тема ${topicId})` : `Папка «${full}» готова`);
   return { name: full.split('/').at(-1), path: full, topicId };
+}
+
+/**
+ * Убирает папку с диска вместе со всем, что внутри, включая вложенные.
+ * Тему в Telegram тоже удаляем — иначе в чате остаётся пустая вкладка,
+ * которую человек из программы уже никак не уберёт.
+ *
+ * Возврата нет: Telegram не держит корзину для тем.
+ */
+export async function removeFolder(raw) {
+  const path = cleanFolderPath(raw);
+  const chatId = driveChatId();
+  if (!chatId) throw new Error('Не выбран чат для диска');
+
+  const { files, topics } = dropFolder(chatId, BUCKET, path);
+
+  let failed = 0;
+  for (const row of files) {
+    if (!row.message_id) continue;
+    try {
+      await deleteMessage(row.chat_id ?? chatId, row.message_id);
+    } catch (err) {
+      failed += 1;
+      log.warn(`Сообщение ${row.message_id} удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
+    }
+  }
+
+  for (const topic of topics) {
+    if (!topic.topic_id) continue;
+    try {
+      await deleteForumTopic(topic.topic_id, chatId);
+    } catch (err) {
+      log.warn(`Тему «${topic.key}» удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
+    }
+  }
+
+  log.ok(`Папка «${path}» убрана: файлов ${files.length}, тем ${topics.length}`);
+  return { path, files: files.length, topics: topics.length, failed };
 }
 
 /** Переложить файл в другую папку. */
@@ -204,10 +255,17 @@ export async function putFile(absPath, { root, folder, displayName } = {}) {
   upsertPending(record);
 
   try {
-    const folderName = folder ?? (config.driveFolders ? folderOf(absPath, root) : null);
-    const topicId = folderName && config.driveFolders
-      ? await resolveTopic(topicNameFor(folderName), chatId, { key: folderName, bucket: BUCKET })
-      : null;
+    // Папка запоминается всегда, тема — только если чат её держит.
+    // В канале тем нет: файл уйдёт в общую ленту, а папка останется в базе
+    const folderName = folder ?? folderOf(absPath, root);
+    let topicId = null;
+    if (folderName && config.driveFolders) {
+      topicId = await resolveTopic(topicNameFor(folderName), chatId, { key: folderName, bucket: BUCKET })
+        .catch((err) => {
+          log.warn(`Тема для «${folderName}» недоступна: ${describeError(err, { kind: 'bot' })}`);
+          return null;
+        });
+    }
     record.folder = folderName ?? null;
     upsertPending(record);
 
@@ -357,6 +415,26 @@ export async function getFileBack(id, { destDir, onProgress } = {}) {
 
   log.ok(`Скачано: ${row.name} (${humanSize(bytes)}) → ${destPath}`);
   return { path: destPath, bytes, name: row.name };
+}
+
+/**
+ * Заметка к файлу: меняем подпись у самого сообщения в Telegram и помним
+ * копию у себя. Именно ради этого диск удобнее держать в канале — там
+ * подпись правится в любой момент и её видят все, у кого есть доступ.
+ */
+export async function setNote(id, note) {
+  const row = fileById(id);
+  if (!row) throw new Error(`Записи ${id} нет в базе`);
+  if (!row.message_id) throw new Error(`${row.name} ещё не отправлен — подписывать нечего`);
+
+  const text = String(note ?? '').slice(0, 1024);
+  const caption = [driveCaption({ name: row.name, size: row.size }, row.folder), text]
+    .filter(Boolean)
+    .join('\n\n');
+
+  await editMessageCaption(row.chat_id ?? driveChatId(), row.message_id, caption);
+  setFileNote(id, text);
+  return { id, note: text };
 }
 
 /** Убирает файл с диска: удаляет сообщение и запись. */

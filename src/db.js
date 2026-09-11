@@ -119,6 +119,9 @@ function migrate(d) {
   // разные вещи. Без пометки диск показывал годовые темы архива как свои
   // папки — пустые, потому что снимки лежат в другом bucket.
   add('topics', 'bucket', "TEXT NOT NULL DEFAULT 'photos'");
+  // note — заметка к файлу. Живёт подписью в самом сообщении Telegram,
+  // здесь лежит копия: чтобы показать её в списке, не спрашивая Telegram
+  add('files', 'note', 'TEXT');
 
   // У тем, заведённых до появления этой пометки, bucket выставился в 'photos'
   // по умолчанию — вместе с папками диска. Год съёмки выглядит как «2026»,
@@ -462,7 +465,7 @@ export function searchFiles({ query = '', status = '', limit = 100, offset = 0, 
   const total = Number(d.prepare(`SELECT COUNT(*) n FROM files ${filter}`).get(...params)?.n ?? 0);
   const rows = d
     .prepare(
-      `SELECT id, name, rel_path, size, kind, bucket, folder, status, taken_at, sent_at, message_id, chat_id, topic_id,
+      `SELECT id, name, rel_path, size, kind, bucket, folder, note, status, taken_at, sent_at, message_id, chat_id, topic_id,
               file_type, file_id, thumb_file_id, last_error
          FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
@@ -498,6 +501,13 @@ export function putTopic(chatId, key, topicId, title, bucket = 'photos') {
          topic_id = excluded.topic_id, title = excluded.title, bucket = excluded.bucket`,
     )
     .run(String(chatId), key, topicId, title ?? key, bucket);
+}
+
+/** Обратный поиск: по номеру темы — её ключ, то есть путь папки. */
+export function getTopicKey(chatId, topicId, bucket = 'drive') {
+  return openDb()
+    .prepare('SELECT key FROM topics WHERE chat_id = ? AND topic_id = ? AND bucket = ?')
+    .get(String(chatId), Number(topicId), bucket)?.key ?? null;
 }
 
 export function listTopics(chatId) {
@@ -718,6 +728,84 @@ export function driveRootCount(bucket = 'drive', folder = '') {
     );
   }
   return Number(d.prepare('SELECT COUNT(*) n FROM files WHERE bucket = ? AND folder = ?').get(bucket, folder)?.n ?? 0);
+}
+
+/**
+ * Забывает тему и всё, что в ней лежало. Возвращает удалённые записи —
+ * по ним наверху стирают сами сообщения в Telegram.
+ */
+export function dropFolder(chatId, bucket, path) {
+  const d = openDb();
+  const like = `${path}/%`;
+  const rows = d
+    .prepare('SELECT id, name, chat_id, message_id FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)')
+    .all(bucket, path, like);
+
+  d.prepare('DELETE FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)').run(bucket, path, like);
+  const topics = d
+    .prepare('SELECT key, topic_id FROM topics WHERE chat_id = ? AND bucket = ? AND (key = ? OR key LIKE ?)')
+    .all(String(chatId), bucket, path, like);
+  d.prepare('DELETE FROM topics WHERE chat_id = ? AND bucket = ? AND (key = ? OR key LIKE ?)')
+    .run(String(chatId), bucket, path, like);
+
+  return { files: rows, topics };
+}
+
+/* ── общий список для совместной работы ──────────────────────────────────── */
+
+// Поля, которыми участники обмениваются. Пути на компьютере сюда не входят
+// намеренно: их незачем знать тем, кого пустили в чат
+const SHARED_FIELDS = [
+  'sha256', 'name', 'rel_path', 'size', 'mtime', 'taken_at', 'date_source',
+  'stem_key', 'stem_name', 'ext', 'kind', 'bucket', 'folder', 'note',
+  'status', 'method', 'chat_id', 'topic_id', 'message_id',
+  'file_id', 'file_unique_id', 'file_type', 'video_file_id', 'thumb_file_id',
+  'sent_at', 'created_at',
+];
+
+/** Записи одного хранилища — то, что уходит другим участникам. */
+export function exportRows(bucket) {
+  return openDb()
+    .prepare(`SELECT ${SHARED_FIELDS.join(', ')} FROM files WHERE bucket = ? AND status = 'sent' ORDER BY id`)
+    .all(bucket);
+}
+
+/**
+ * Подмешивает чужие записи. Только добавляет: у чего отпечаток уже известен,
+ * то остаётся как есть — так у слияния нет проигравших.
+ * @returns {number} сколько записей добавилось
+ */
+export function importRows(rows, bucket) {
+  const d = openDb();
+  const insert = d.prepare(
+    `INSERT OR IGNORE INTO files (${SHARED_FIELDS.join(', ')})
+     VALUES (${SHARED_FIELDS.map((f) => `@${f}`).join(', ')})`,
+  );
+
+  let added = 0;
+  d.exec('BEGIN');
+  try {
+    for (const row of rows) {
+      if (!row?.sha256 || row.bucket !== bucket) continue;
+      const values = {};
+      for (const field of SHARED_FIELDS) values[field] = row[field] ?? null;
+      values.bucket = bucket;
+      values.created_at = Number(row.created_at) || Date.now();
+      values.size = Number(row.size) || 0;
+      added += insert.run(values).changes;
+    }
+    d.exec('COMMIT');
+  } catch (err) {
+    d.exec('ROLLBACK');
+    throw err;
+  }
+  return added;
+}
+
+/** Заметка к файлу — та же подпись, что стоит под ним в Telegram. */
+export function setFileNote(id, note) {
+  openDb().prepare('UPDATE files SET note = ? WHERE id = ?').run(note || null, Number(id));
+  return fileById(id);
 }
 
 /** Переложить файл в другую папку (в самом Telegram сообщение не двигается). */

@@ -39,18 +39,40 @@
         <span>Настройка</span><span class="side-caret">▸</span>
       </button>
     </div>
+    <!--
+      Бот и аккаунт переехали в «Этот профиль»: это доступы самого человека,
+      а не шаг настройки фотоархива. Шагов осталось четыре — про сам архив.
+    -->
     <ul class="nav" id="nav" hidden>
       <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
-      <li><button data-pane="bot"><span class="nav-num" data-num>2</span><span class="nav-label">Бот</span></button></li>
-      <li><button data-pane="account"><span class="nav-num" data-num>3</span><span class="nav-label">Ваш аккаунт</span></button></li>
-      <li><button data-pane="chat"><span class="nav-num" data-num>4</span><span class="nav-label">Куда складывать</span></button></li>
-      <li><button data-pane="folders"><span class="nav-num" data-num>5</span><span class="nav-label">Что отправлять</span></button></li>
-      <li><button data-pane="prefs"><span class="nav-num" data-num>6</span><span class="nav-label">Как отправлять</span></button></li>
-      <li><button data-pane="finish"><span class="nav-num" data-num>7</span><span class="nav-label">Проверка и запуск</span></button></li>
+      <li><button data-pane="chat"><span class="nav-num" data-num>2</span><span class="nav-label">Куда складывать</span></button></li>
+      <li><button data-pane="folders"><span class="nav-num" data-num>3</span><span class="nav-label">Что отправлять</span></button></li>
+      <li><button data-pane="prefs"><span class="nav-num" data-num>4</span><span class="nav-label">Как отправлять</span></button></li>
     </ul>
 
     <div class="side-title">Этот профиль</div>
     <ul class="nav nav-plain" id="navExtra">
+      <li>
+        <button data-pane="bot">
+          <!-- робот: бот, от имени которого всё отправляется -->
+          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
+            <rect x="3.8" y="7.4" width="14.4" height="10" rx="3"/>
+            <path d="M11 4.2v3.2"/><circle cx="11" cy="3.2" r="1.1"/>
+            <circle cx="8" cy="12.2" r="1.1"/><circle cx="14" cy="12.2" r="1.1"/>
+          </svg>
+          <span class="nav-label">Бот</span>
+        </button>
+      </li>
+      <li>
+        <button data-pane="account">
+          <!-- ключ: вход в ваш аккаунт Telegram -->
+          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
+            <circle cx="8" cy="11" r="3.4"/><path d="M11.4 11h6.2"/>
+            <path d="M15.6 11v2.8"/><path d="M17.6 11v2"/>
+          </svg>
+          <span class="nav-label">Ваш аккаунт</span>
+        </button>
+      </li>
       <li>
         <button data-pane="profile">
           <!-- человек под щитом: профиль и его защита -->
@@ -143,10 +165,14 @@
 
       <div class="note blue">
         <b>Как это устроено.</b> Файлы до 50 МБ отправляет бот. Файлы крупнее бот отправлять не умеет — для них программа
-        подключается к Telegram от вашего имени. Поэтому шагов настройки два: сначала бот, потом ваш аккаунт.
+        подключается к Telegram от вашего имени. И бот, и вход в аккаунт настраиваются один раз
+        в блоке <b>«Этот профиль»</b> слева, а шаги здесь — уже про сам архив.
       </div>
 
-      <div class="btn-row"><button class="btn btn-primary btn-lg" data-go="bot">Начать →</button></div>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-lg" data-go="bot">Начать с бота →</button>
+        <button class="btn btn-lg" data-go="chat">Бот уже есть</button>
+      </div>
     </section>
 
     <!-- ── 2. Бот ────────────────────────────────────────────────────── -->
@@ -177,7 +203,7 @@
         <button class="btn btn-primary" id="saveBot">Подключить бота</button>
         <span id="botStatus" class="pill">не проверено</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="account">Дальше →</button></div>
+      <div class="btn-row"><button class="btn" data-go="account">Дальше: ваш аккаунт →</button></div>
     </section>
 
     <!-- ── Куда складывать ───────────────────────────────────────────── -->
@@ -216,7 +242,7 @@
 
         <div class="note" id="needAccount" hidden>
           Создать группу может только ваш аккаунт — у ботов такого права нет.
-          <a href="#" data-go="account">Вернитесь на шаг 3 и войдите</a>, это займёт минуту.
+          <a href="#" data-go="account">Откройте «Ваш аккаунт» и войдите</a>, это займёт минуту.
           Либо выберите «У меня уже есть» и подключите готовую группу.
         </div>
       </div>
@@ -319,7 +345,7 @@
       </div>
 
       <p class="hint">Можно пропустить — тогда крупные видео отправляться не будут, а группу для хранения придётся создать руками.</p>
-      <div class="btn-row"><button class="btn" data-go="chat">Дальше →</button></div>
+      <div class="btn-row"><button class="btn" data-go="chat">Дальше: куда складывать →</button></div>
     </section>
 
     <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
@@ -616,7 +642,8 @@
       <div class="dropzone" id="driveDrop">
         <div class="drop-hint" id="driveDropHint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
-          <b>Отпустите — загружу на диск</b>
+          <b id="driveDropWhere">Отпустите — загружу на диск</b>
+          <small id="driveDropChat"></small>
         </div>
         <div id="driveBody"></div>
       </div>
@@ -624,14 +651,6 @@
       <div class="btn-row" id="driveMoreRow" hidden>
         <button class="btn" id="driveMore">Показать ещё 100</button>
         <span class="hint" style="margin:0" id="driveCounter"></span>
-      </div>
-
-      <div class="uploads" id="driveUploads" hidden>
-        <div class="uploads-head">
-          <b id="uploadsTitle">Загрузка</b>
-          <span class="uploads-sub" id="uploadsSub"></span>
-        </div>
-        <div id="uploadsList"></div>
       </div>
 
       <div class="group-title">Ещё</div>
@@ -664,6 +683,32 @@
     </section>
 
     <!-- ── Доступ ────────────────────────────────────────────────────── -->
+    <!-- ── Общий список: чтобы у всех участников было одинаково ──────── -->
+    <section class="pane" id="pane-sync">
+      <p class="lead" id="syncLead">Список файлов лежит на этом компьютере. Чтобы остальные участники
+        видели то же самое, выложите его в чат — и забирайте оттуда, когда кто-то другой что-то добавил.</p>
+
+      <div class="grid2" id="syncNumbers"></div>
+
+      <div class="group-title">Общий список</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label"><b>Выложить в чат</b><small id="syncPublishSub">Свежий список уедет в чат хранилища отдельным сообщением</small></div>
+          <button class="btn btn-primary" id="syncPublish">Выложить</button>
+        </div>
+        <div class="row">
+          <div class="row-label"><b>Забрать из чата</b><small>Чужие записи добавятся к вашим. Ваши не пропадут и не изменятся</small></div>
+          <button class="btn" id="syncPull">Забрать</button>
+        </div>
+      </div>
+
+      <div class="note blue">
+        <b>Что уходит в чат.</b> Только имена файлов, размеры и номера сообщений — то, что и так
+        видно в чате. Пути на вашем компьютере в список не попадают: их незачем знать тем,
+        кого вы пустили.
+      </div>
+    </section>
+
     <section class="pane" id="pane-access">
       <p class="lead" id="accessLead">Ссылка-приглашение с собственным сроком. Когда срок выходит, программа убирает человека из чата — <b>убирает, а не банит</b>: захотите — пустите снова по новой ссылке.</p>
 
@@ -786,6 +831,28 @@
       </button>
     </div>
   </div>
+</div>
+
+<!--
+  Окошко загрузки живёт поверх страницы, в правом нижнем углу: так его видно
+  с любой вкладки и на любой прокрутке, и оно не уезжает вместе со списком.
+-->
+<div class="uploads" id="driveUploads" hidden>
+  <div class="uploads-head">
+    <div class="uploads-what">
+      <b id="uploadsTitle">Загрузка</b>
+      <span class="uploads-sub" id="uploadsSub"></span>
+    </div>
+    <div class="uploads-buttons">
+      <button class="uploads-btn" id="uploadsFold" title="Свернуть" aria-expanded="true">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8.2 3.5 3.4 3.5-3.4"/></svg>
+      </button>
+      <button class="uploads-btn" id="uploadsClose" title="Закрыть">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="uploadsList"></div>
 </div>
 
 <div class="modal-backdrop" id="modal" hidden>
