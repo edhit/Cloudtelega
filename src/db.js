@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS seen_chats (
   seen_at  INTEGER NOT NULL
 );
 
+-- Люди, писавшие боту. Тоже помним навсегда: бот не может написать первым,
+-- поэтому тот, кто однажды написал, — единственный, кому мы можем что-то
+-- послать, и терять этот список при перезапуске нельзя.
+CREATE TABLE IF NOT EXISTS seen_people (
+  id       TEXT PRIMARY KEY,
+  name     TEXT,
+  username TEXT,
+  seen_at  INTEGER NOT NULL
+);
+
 -- Топики форум-супергруппы: год -> message_thread_id
 CREATE TABLE IF NOT EXISTS topics (
   chat_id  TEXT    NOT NULL,
@@ -544,6 +554,26 @@ export function putSeenChat({ id, title, type, isForum }) {
          seen_at = excluded.seen_at`,
     )
     .run(String(id), title ?? null, type ?? null, isForum ? 1 : 0, Date.now());
+}
+
+export function putSeenPerson({ id, name, username }) {
+  if (!id) return;
+  openDb()
+    .prepare(
+      `INSERT INTO seen_people (id, name, username, seen_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = COALESCE(excluded.name, seen_people.name),
+         username = COALESCE(excluded.username, seen_people.username),
+         seen_at = excluded.seen_at`,
+    )
+    .run(String(id), name ?? null, username ?? null, Date.now());
+}
+
+export function listSeenPeople() {
+  return openDb()
+    .prepare('SELECT id, name, username FROM seen_people ORDER BY seen_at DESC')
+    .all()
+    .map((r) => ({ id: r.id, name: r.name || r.id, username: r.username }));
 }
 
 export function listSeenChats() {

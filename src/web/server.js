@@ -10,7 +10,7 @@ import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import {
   closeDb, countFiles, fileIdCoverage, listAllFolders, listFiles, listGuests, listSeenChats,
-  listTopics, putSeenChat, searchFiles, sqliteDriver, stats,
+  listSeenPeople, listTopics, putSeenChat, searchFiles, sqliteDriver, stats,
 } from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
@@ -20,7 +20,7 @@ import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline
 import { summarizeUnreadable } from '../scanner.js';
 import {
   createFolder, driveOverview, folders as driveFolders, getFileBack, moveFile,
-  putMany, putUploaded, removeFolder, removeFromDrive, setNote,
+  putMany, putUploaded, removeFolder, removeFromDrive, setNote, shareFile,
 } from '../drive.js';
 import {
   accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
@@ -1021,6 +1021,22 @@ const routes = {
     const id = String(body?.storage ?? 'drive');
     const r = await pullSnapshot(id, body?.messageId);
     return { ...r, ...syncState(id) };
+  },
+
+  // Кому можно отдать файл: бот пишет только тем, кто ему писал сам
+  'POST /api/drive/people': async () => {
+    const known = new Map();
+    for (const p of listSeenPeople()) known.set(p.id, { ...p, wroteBot: true });
+    for (const p of seenPeople()) known.set(String(p.id), { ...p, id: String(p.id), wroteBot: true });
+    return { people: [...known.values()], account: Boolean(config.session) };
+  },
+
+  'POST /api/drive/share': async (body) => {
+    const r = await shareFile(Number(body?.id), {
+      userId: body?.userId ? String(body.userId) : undefined,
+      username: body?.username ? String(body.username).trim() : undefined,
+    });
+    return r;
   },
 
   'POST /api/drive/note': async (body) => {

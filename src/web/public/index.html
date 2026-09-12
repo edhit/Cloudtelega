@@ -34,22 +34,6 @@
     <div class="side-title">Хранилища</div>
     <ul class="nav nav-plain" id="navApps"></ul>
 
-    <div class="side-title">
-      <button class="side-toggle" id="setupToggle" aria-expanded="false">
-        <span>Настройка</span><span class="side-caret">▸</span>
-      </button>
-    </div>
-    <!--
-      Бот и аккаунт переехали в «Этот профиль»: это доступы самого человека,
-      а не шаг настройки фотоархива. Шагов осталось четыре — про сам архив.
-    -->
-    <ul class="nav" id="nav" hidden>
-      <li><button data-pane="start"><span class="nav-num" data-num>1</span><span class="nav-label">С чего начать</span></button></li>
-      <li><button data-pane="chat"><span class="nav-num" data-num>2</span><span class="nav-label">Куда складывать</span></button></li>
-      <li><button data-pane="folders"><span class="nav-num" data-num>3</span><span class="nav-label">Что отправлять</span></button></li>
-      <li><button data-pane="prefs"><span class="nav-num" data-num>4</span><span class="nav-label">Как отправлять</span></button></li>
-    </ul>
-
     <div class="side-title">Этот профиль</div>
     <ul class="nav nav-plain" id="navExtra">
       <li>
@@ -82,6 +66,16 @@
             <path d="M7.6 15.4a3.6 3.6 0 0 1 6.8 0"/>
           </svg>
           <span class="nav-label">Профиль и защита</span>
+        </button>
+      </li>
+      <li>
+        <button data-pane="setup">
+          <!-- шестерёнка: настройка -->
+          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
+            <circle cx="11" cy="11" r="2.8"/>
+            <path d="M11 2.6v2.2M11 17.2v2.2M3.9 7l1.9 1.1M16.2 13.9l1.9 1.1M3.9 15l1.9-1.1M16.2 8.1l1.9-1.1"/>
+          </svg>
+          <span class="nav-label">Настройка</span>
         </button>
       </li>
       <li>
@@ -245,7 +239,7 @@
 
     <!-- ── Куда складывать ───────────────────────────────────────────── -->
     <section class="pane" id="pane-chat">
-      <h1>Шаг 2. Куда складывать</h1>
+      <h1>Куда складывать</h1>
       <p class="lead">Нужна приватная <b>группа с темами</b>. Темы — это папки внутри группы: программа заведёт «2019», «2020», «2021» и разложит снимки по годам сама. В канале тем не бывает, поэтому берём именно группу.</p>
 
       <div class="options">
@@ -318,7 +312,7 @@
       <div class="btn-row">
         <span id="chatStatus" class="pill">не проверено</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="folders">Дальше →</button></div>
+      <div class="btn-row"><button class="btn" data-go="folders">Дальше: что отправлять →</button></div>
     </section>
 
     <!-- ── 4. Аккаунт ────────────────────────────────────────────────── -->
@@ -387,7 +381,7 @@
 
     <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
     <section class="pane" id="pane-folders">
-      <h1>Шаг 3. Что отправлять</h1>
+      <h1>Что отправлять</h1>
       <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со вложенными папками и сама отберёт медиафайлы: HEIC с iPhone, JPEG и MP4 с Android, RAW с фотоаппарата.</p>
 
       <div class="group-title">Выбранные папки</div>
@@ -409,12 +403,12 @@
         <span id="pathStatus" class="pill">папки не выбраны</span>
         <span class="hint" style="margin:0">Сохраняется само, как в системных настройках</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="prefs">Дальше →</button></div>
+      <div class="btn-row"><button class="btn" data-go="prefs">Дальше: как отправлять →</button></div>
     </section>
 
     <!-- ── 6. Настройки отправки ─────────────────────────────────────── -->
     <section class="pane" id="pane-prefs">
-      <h1>Шаг 4. Как отправлять</h1>
+      <h1>Как отправлять</h1>
       <p class="lead">Значения по умолчанию подходят большинству. Если не уверены — просто идите дальше.</p>
 
       <div class="group-title">Вид архива</div>

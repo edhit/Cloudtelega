@@ -255,6 +255,7 @@ const CTX_ART = {
   move: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/><path d="M8.6 12.4h5"/><path d="m11.6 10.4 2 2-2 2"/>',
   open: '<path d="M9.4 4.6H5.6a1.6 1.6 0 0 0-1.6 1.6v10a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6v-3.8"/><path d="M13 4h5v5"/><path d="m10.2 11.8 7.4-7.4"/>',
   folder: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/>',
+  share: '<path d="M11 14.4V3.8"/><path d="m7.2 7.2 3.8-3.4 3.8 3.4"/><path d="M4.4 12.4v4a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8v-4"/>',
   sort: '<path d="M6.4 4.6v12.8"/><path d="m3.6 7.4 2.8-2.8 2.8 2.8"/><path d="M12.2 6.4h6.2"/><path d="M12.2 11h4.4"/><path d="M12.2 15.6h2.6"/>',
   trash: '<path d="M4.6 6.4h12.8"/><path d="M8.6 6.4V4.8h4.8v1.6"/><path d="m6.2 6.4.8 10.2a1.6 1.6 0 0 0 1.6 1.4h4.8a1.6 1.6 0 0 0 1.6-1.4l.8-10.2"/>',
 };
@@ -389,14 +390,12 @@ const humanSize = (bytes) => {
 
 /* ── навигация ───────────────────────────────────────────────────────────── */
 
-// Шаги настройки: попав на любой из них, раскрываем группу в меню,
-// иначе человек оказывается на странице, которой не видно в списке.
-// Шаги настройки самого архива. Бот и аккаунт сюда не входят: это доступы
-// человека, они живут в блоке профиля и раскрывать список шагов не должны
-const SETUP_PANES = new Set(['start', 'chat', 'folders', 'prefs']);
-
 function show(pane) {
-  if (SETUP_PANES.has(pane)) openSetup();
+  // Пункт меню может указывать на раздел, а не на страницу: у раздела своей
+  // страницы нет, открываем его первую вкладку
+  const section = SECTIONS.find((sec) => sec.id === pane && !document.getElementById(`pane-${pane}`));
+  if (section) return show(section.tabs[0].pane);
+
   $$('.pane').forEach((p) => p.classList.toggle('active', p.id === `pane-${pane}`));
   renderStorageHead(pane);
 
@@ -421,13 +420,7 @@ $$('#nav button[data-pane], #navExtra button[data-pane]').forEach((b) =>
   b.addEventListener('click', () => show(b.dataset.pane)));
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => show(b.dataset.go)));
 
-function markDone(pane, done) {
-  const num = $(`#nav button[data-pane="${pane}"] .nav-num`);
-  if (!num) return;
-  num.classList.toggle('done', done);
-  if (done) num.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8.4 2.7 2.7L12 5.6"/></svg>';
-  else num.textContent = num.dataset.n ?? num.textContent;
-}
+
 
 /** Правильное окончание: 1 файл, 2 файла, 5 файлов. */
 function plural(n, one, few, many) {
@@ -484,13 +477,34 @@ const APPS = [
 
 // Какая панель какому хранилищу принадлежит. Панель доступа общая: она
 // показывает то хранилище, которое сейчас открыто.
+/**
+ * Настройка — такой же раздел с вкладками, как хранилище, только без чата.
+ * Раньше её шаги были пронумерованным списком в боковом меню: пока
+ * настраиваешь — уместно, а потом занимает полменю и напоминает,
+ * что программу когда-то «проходили по шагам».
+ */
+const SETTINGS_SECTION = {
+  id: 'setup',
+  title: 'Настройка',
+  tint: '#8e8e93',
+  icon: '<circle cx="11" cy="11" r="2.8"/><path d="M11 2.6v2.2M11 17.2v2.2M3.9 7l1.9 1.1M16.2 13.9l1.9 1.1M3.9 15l1.9-1.1M16.2 8.1l1.9-1.1"/>',
+  tabs: [
+    { pane: 'start', label: 'С чего начать' },
+    { pane: 'chat', label: 'Куда складывать' },
+    { pane: 'folders', label: 'Что отправлять' },
+    { pane: 'prefs', label: 'Как отправлять' },
+  ],
+};
+
+const SECTIONS = [...APPS, SETTINGS_SECTION];
+
 const SHARED_PANES = new Set(['access', 'sync']);
 const PANE_OWNER = new Map();
-for (const app of APPS) for (const tab of app.tabs) if (!SHARED_PANES.has(tab.pane)) PANE_OWNER.set(tab.pane, app.id);
+for (const app of SECTIONS) for (const tab of app.tabs) if (!SHARED_PANES.has(tab.pane)) PANE_OWNER.set(tab.pane, app.id);
 
 let openStorage = 'drive';
 
-const storageById = (id) => APPS.find((a) => a.id === id);
+const storageById = (id) => SECTIONS.find((a) => a.id === id);
 
 /** Чат открытого сейчас хранилища — по нему спрашиваем и раздаём доступ. */
 function activeStorageChat() {
@@ -505,6 +519,10 @@ function renderStorageHead(pane) {
     head.hidden = true;
     return;
   }
+
+  // Вкладки доступа и общего списка показываем только у хранилищ:
+  // у настройки своего чата нет, и пускать в неё некого
+  if (SHARED_PANES.has(pane) && !storageById(openStorage)?.chat) return;
 
   openStorage = owner;
   const app = storageById(owner);
@@ -524,7 +542,9 @@ function renderStorageHead(pane) {
     tabs.append(btn);
   }
 
-  renderStorageChat(app);
+  // У настройки чата нет — прятать нечего, но и показывать тоже
+  $('#storageChat').hidden = !app.chat;
+  if (app.chat) renderStorageChat(app);
 }
 
 /** Чат хранилища — названием и аватаром: числовой id людям ничего не говорит. */
@@ -660,16 +680,10 @@ function renderAppTiles() {
 }
 
 $('#homeSetupGo').addEventListener('click', () => {
-  openSetup();
   show(!state?.settings.botTokenSet ? 'bot' : !state?.settings.chatId ? 'chat' : 'account');
 });
 
-function openSetup(open = true) {
-  $('#nav').hidden = !open;
-  $('#setupToggle').setAttribute('aria-expanded', String(open));
-}
 
-$('#setupToggle').addEventListener('click', () => openSetup($('#nav').hidden));
 
 /* ── чипы: показываем имена, а не технические идентификаторы ─────────────── */
 
@@ -919,11 +933,6 @@ async function refresh() {
   renderPaths();
 
   renderChatChip();
-  markDone('bot', s.botTokenSet);
-  markDone('chat', Boolean(s.chatId));
-  markDone('account', s.sessionSet);
-  markDone('folders', paths.length > 0);
-  markDone('prefs', state.envExists);
 
   if (s.botTokenSet) pill($('#botStatus'), '', 'бот подключён');
   if (s.chatId) pill($('#chatStatus'), '', s.chatTitle ? `группа «${s.chatTitle}»` : 'группа выбрана');
@@ -2589,6 +2598,55 @@ const fileOps = {
     toast(text ? 'Заметка сохранена' : 'Заметка убрана');
   },
 
+  /**
+   * Отдать файл человеку. Ссылки «только на этот файл» в Telegram не бывает:
+   * доступ там даётся к чату целиком. Поэтому файл не «открывают», а посылают
+   * копией в личную переписку — человек получает ровно его и больше ничего.
+   */
+  share: async (r) => {
+    const { people, account } = await api('/api/drive/people', {});
+
+    const picked = await pickFromList({
+      title: `Кому отправить «${r.name}»`,
+      text: 'Человек получит только этот файл — копией в личные сообщения. Ни чата, ни остальных файлов он не увидит.',
+      items: [
+        ...people.map((p) => ({
+          id: p.id,
+          label: p.name,
+          sub: p.username ? `@${p.username} · писал боту` : 'писал боту',
+          // Именно поле, а не подпись: в подписи ещё и пояснение
+          username: p.username,
+          photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
+        })),
+        {
+          id: '__byname__',
+          label: 'Указать @имя',
+          sub: account ? 'Отправлю от вашего имени' : 'Нужен вход в аккаунт',
+          art: '<circle cx="11" cy="7.6" r="3.2"/><path d="M4.6 18.4a6.4 6.4 0 0 1 12.8 0"/>',
+          tint: '#8e8e93',
+        },
+      ],
+      empty: 'Пока некому: бот может писать только тем, кто сам ему написал.',
+    });
+    if (!picked) return;
+
+    if (picked.id !== '__byname__') {
+      const r2 = await api('/api/drive/share', { id: r.id, userId: picked.id, username: picked.username });
+      toast(`«${r2.name}» отправлен: ${picked.label}`);
+      return;
+    }
+
+    const who = await askText({
+      title: 'Кому отправить',
+      text: 'Напишите @имя в Telegram. Программа отправит файл от вашего имени — копией, так что название чата человек не увидит.',
+      placeholder: '@masha',
+      okText: 'Отправить',
+    });
+    if (!who) return;
+    const r2 = await api('/api/drive/share', { id: r.id, username: who });
+    toast(`«${r2.name}» отправлен ${who}`);
+  },
+
   move: async (r) => {
     const target = await pickFolderTree({
       title: 'Куда переложить',
@@ -2626,6 +2684,7 @@ function fileMenuItems(r) {
   const items = [
     { label: 'Открыть в Telegram', art: CTX_ART.open, run: () => fileOps.open(r) },
     { label: 'Скачать на компьютер', art: CTX_ART.download, run: () => fileOps.download(r) },
+    { label: 'Отправить человеку…', art: CTX_ART.share, run: () => fileOps.share(r) },
     'sep',
   ];
 
@@ -3903,7 +3962,6 @@ $('#doCleanup').addEventListener('click', (e) => guard(e.target, async () => {
 
 /* ── старт ───────────────────────────────────────────────────────────────── */
 
-$$('#nav .nav-num').forEach((n) => { n.dataset.n = n.textContent; });
 renderAppNav();
 
 refresh()
@@ -3916,7 +3974,6 @@ refresh()
     // Не настроенное облако открываем сразу на настройке, готовое — на главной
     const ready = state.settings.botTokenSet && state.settings.chatId;
     if (!ready) {
-      openSetup();
       show('start');
     } else {
       await loadHome();

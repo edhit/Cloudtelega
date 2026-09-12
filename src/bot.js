@@ -5,7 +5,7 @@ import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import { formatDate } from './dates.js';
 import {
-  fileIdCoverage, getMeta, lastSent, listFailed, listTopics, putSeenChat, randomSent,
+  fileIdCoverage, getMeta, lastSent, listFailed, listTopics, putSeenChat, putSeenPerson, randomSent,
   resetFailed, searchSent, setMeta, stats,
 } from './db.js';
 import { detectPhones, inspectMount, listMountPoints } from './devices.js';
@@ -508,11 +508,19 @@ function remember(update) {
 
   const from = update.message?.from ?? update.edited_message?.from;
   if (from && !from.is_bot && update.message?.chat?.type === 'private') {
-    seen.people.set(String(from.id), {
+    const person = {
       id: String(from.id),
       name: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || 'Пользователь',
       username: from.username ?? null,
-    });
+    };
+    seen.people.set(person.id, person);
+    // И в базу: бот не может написать первым, поэтому тот, кто однажды
+    // написал сам, — единственный, кому мы вообще можем что-то послать
+    try {
+      putSeenPerson(person);
+    } catch (err) {
+      log.warn(`Не смог запомнить ${person.name}: ${err.message}`);
+    }
   }
 }
 

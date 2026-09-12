@@ -24,11 +24,12 @@ import { extOf, kindOf, mimeOf } from './media.js';
 import { normalizeStem } from './naming.js';
 import { messageLink } from './links.js';
 import {
-  botConfigured, deleteForumTopic, deleteMessage, editMessageCaption, sendFileViaBot,
+  botConfigured, copyMessage, deleteForumTopic, deleteMessage, editMessageCaption,
+  sendFileViaBot,
 } from './telegram/botApi.js';
 import {
-  deleteMessageViaAccount, downloadMessageFile, editCaptionViaAccount, mtprotoConfigured,
-  sendFileViaAccount,
+  copyMessageToPerson, deleteMessageViaAccount, downloadMessageFile, editCaptionViaAccount,
+  mtprotoConfigured, sendFileViaAccount,
 } from './telegram/mtproto.js';
 import { resolveTopic } from './telegram/topics.js';
 import { BOT_UPLOAD_LIMIT } from './config.js';
@@ -474,6 +475,59 @@ async function dropMessage(chatId, messageId, { method } = {}) {
       return false;
     }
   }
+}
+
+/**
+ * Отдаёт один файл человеку — и ничего больше.
+ *
+ * Ссылки «только на этот файл» в Telegram не бывает: доступ там даётся
+ * к чату целиком, а не к отдельному сообщению. Поэтому файл не «открывают»,
+ * а отправляют — копией в личную переписку. Копия, а не пересылка: у
+ * пересланного видно, откуда оно, то есть выдало бы название чата.
+ *
+ * Два пути, и выбор между ними не наша прихоть, а правило Telegram:
+ *  • бот может писать только тому, кто сам ему когда-то написал;
+ *  • ваш аккаунт достаёт любого по @имени.
+ *
+ * @param {number} id запись в базе
+ * @param {{userId?:string|number, username?:string}} to кому
+ */
+export async function shareFile(id, { userId, username } = {}) {
+  const row = fileById(id);
+  if (!row) throw new Error(`Записи ${id} нет в базе`);
+  if (row.status !== 'sent' || !row.message_id) throw new Error(`${row.name} ещё не отправлен на диск`);
+
+  const from = row.chat_id ?? driveChatId();
+  const note = row.note ? `\n\n${row.note}` : '';
+  const caption = `${row.name} · ${humanSize(row.size)}${note}`;
+
+  // Человеку, который писал боту, отправляет бот: это не требует входа в аккаунт
+  if (userId && botConfigured()) {
+    try {
+      await copyMessage(userId, from, row.message_id, { caption });
+      log.ok(`Файл «${row.name}» отправлен человеку ${username ? `@${username}` : userId}`);
+      return { sent: 'bot', name: row.name };
+    } catch (err) {
+      // Бот не пишет первым: если человек ему не писал, Telegram откажет
+      if (!mtprotoConfigured()) {
+        throw new Error(`Бот не смог: ${describeError(err, { kind: 'bot' })}. `
+          + 'Скорее всего, этот человек ни разу не писал вашему боту — попросите его написать боту хоть что-нибудь, '
+          + 'либо войдите в аккаунт, и программа отправит файл от вашего имени');
+      }
+      log.info(`Бот отправить не смог (${describeError(err, { kind: 'bot' })}) — пробую от вашего имени`);
+    }
+  }
+
+  const target = username ? (String(username).startsWith('@') ? username : `@${username}`) : userId;
+  if (!target) throw new Error('Не понял, кому отправлять');
+  if (!mtprotoConfigured()) {
+    throw new Error('Чтобы отправить файл тому, кто не писал боту, нужен вход в аккаунт: '
+      + 'бот не может написать человеку первым — так устроен Telegram');
+  }
+
+  await copyMessageToPerson({ to: target, fromChatId: from, messageId: row.message_id });
+  log.ok(`Файл «${row.name}» отправлен ${target} от вашего имени`);
+  return { sent: 'account', name: row.name };
 }
 
 /** Убирает файл с диска: удаляет сообщение и запись. */

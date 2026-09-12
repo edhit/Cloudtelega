@@ -189,6 +189,22 @@ export async function editCaptionViaAccount({ chatId = config.chatId, messageId,
   return true;
 }
 
+/**
+ * Отдаёт одно сообщение человеку от вашего имени — копией, без пометки
+ * «переслано». Это важно: пересланное сообщение показывает, откуда оно,
+ * то есть выдало бы название чата, куда человека не пускали.
+ *
+ * Так можно отправить файл любому, кого достаёт ваш аккаунт: по @имени
+ * или числовому id. Бот на это не способен — он не пишет первым.
+ */
+export async function copyMessageToPerson({ to, fromChatId = config.chatId, messageId }) {
+  const c = await getClient();
+  const target = String(to).startsWith('@') ? String(to) : Number(to) || String(to);
+  const from = await resolvePeer(fromChatId);
+  const sent = await c.copyMessages(target, { messages: [Number(messageId)], fromPeer: from });
+  return { messageId: sent?.[0]?.id ?? null };
+}
+
 /** Удаляет сообщение от имени аккаунта. */
 export async function deleteMessageViaAccount({ chatId = config.chatId, messageId }) {
   const c = await getClient();
