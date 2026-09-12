@@ -175,6 +175,28 @@ export async function sendFileViaAccount({ filePath, fileName, size, caption, pa
   return { messageId: msg.id, method: 'mtproto', fileType: null, fileId: null, fileUniqueId: null, videoFileId: null };
 }
 
+/**
+ * Меняет подпись у сообщения, отправленного аккаунтом.
+ *
+ * Бот чужие сообщения править не может — Telegram отвечает «message can't be
+ * edited». А крупные файлы уходят именно аккаунтом: бот больше 50 МБ не берёт.
+ * Значит, заметку к такому файлу может поправить только тот, кто его послал.
+ */
+export async function editCaptionViaAccount({ chatId = config.chatId, messageId, caption }) {
+  const c = await getClient();
+  const peer = await resolvePeer(chatId);
+  await c.editMessage(peer, { message: Number(messageId), text: String(caption ?? '').slice(0, 1024) });
+  return true;
+}
+
+/** Удаляет сообщение от имени аккаунта. */
+export async function deleteMessageViaAccount({ chatId = config.chatId, messageId }) {
+  const c = await getClient();
+  const peer = await resolvePeer(chatId);
+  await c.deleteMessages(peer, [Number(messageId)], { revoke: true });
+  return true;
+}
+
 /** Список существующих топиков форум-супергруппы: [{ id, title }]. */
 export async function listForumTopics(limit = 100, chatId = config.chatId) {
   const { Api } = loadGramJs();

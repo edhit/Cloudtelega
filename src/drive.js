@@ -26,7 +26,10 @@ import { messageLink } from './links.js';
 import {
   botConfigured, deleteForumTopic, deleteMessage, editMessageCaption, sendFileViaBot,
 } from './telegram/botApi.js';
-import { downloadMessageFile, mtprotoConfigured, sendFileViaAccount } from './telegram/mtproto.js';
+import {
+  deleteMessageViaAccount, downloadMessageFile, editCaptionViaAccount, mtprotoConfigured,
+  sendFileViaAccount,
+} from './telegram/mtproto.js';
 import { resolveTopic } from './telegram/topics.js';
 import { BOT_UPLOAD_LIMIT } from './config.js';
 
@@ -152,12 +155,7 @@ export async function removeFolder(raw) {
   let failed = 0;
   for (const row of files) {
     if (!row.message_id) continue;
-    try {
-      await deleteMessage(row.chat_id ?? chatId, row.message_id);
-    } catch (err) {
-      failed += 1;
-      log.warn(`Сообщение ${row.message_id} удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
-    }
+    if (!(await dropMessage(row.chat_id ?? chatId, row.message_id, { method: row.method }))) failed += 1;
   }
 
   for (const topic of topics) {
@@ -432,9 +430,50 @@ export async function setNote(id, note) {
     .filter(Boolean)
     .join('\n\n');
 
-  await editMessageCaption(row.chat_id ?? driveChatId(), row.message_id, caption);
+  const chatId = row.chat_id ?? driveChatId();
+
+  // Править сообщение может только тот, кто его послал: бот получает от
+  // Telegram «message can't be edited» на всё чужое. Крупные файлы уходят
+  // аккаунтом, выложенные с телефона — вообще человеком.
+  if (row.method === 'bot') {
+    await editMessageCaption(chatId, row.message_id, caption);
+  } else if (row.method === 'mtproto' && mtprotoConfigured()) {
+    await editCaptionViaAccount({ chatId, messageId: row.message_id, caption });
+  } else if (row.method === 'telegram') {
+    throw new Error(`«${row.name}» выложили в чат вручную — такую подпись программа править не может, `
+      + 'поправьте её прямо в Telegram');
+  } else {
+    throw new Error(`«${row.name}» отправлен через ваш аккаунт — чтобы править подпись, войдите в аккаунт`);
+  }
+
   setFileNote(id, text);
   return { id, note: text };
+}
+
+/**
+ * Убирает сообщение из чата. Бот-администратор с правом удалять сообщения
+ * может убрать любое и в любой момент — ограничение «только за двое суток»
+ * на него не распространяется. Но если права не дали, бот бессилен: тогда
+ * пробуем аккаунтом, он в своём чате всегда хозяин.
+ */
+async function dropMessage(chatId, messageId, { method } = {}) {
+  try {
+    await deleteMessage(chatId, messageId);
+    return true;
+  } catch (err) {
+    if (!mtprotoConfigured()) {
+      log.warn(`Сообщение удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
+      return false;
+    }
+    try {
+      await deleteMessageViaAccount({ chatId, messageId });
+      log.info(`Сообщение ${messageId} убрано аккаунтом — боту Telegram не дал${method ? ` (${method})` : ''}`);
+      return true;
+    } catch (second) {
+      log.warn(`Сообщение удалить не вышло: ${describeError(second, { kind: 'mtproto' })}`);
+      return false;
+    }
+  }
 }
 
 /** Убирает файл с диска: удаляет сообщение и запись. */
@@ -442,9 +481,7 @@ export async function removeFromDrive(id) {
   const row = fileById(id);
   if (!row) throw new Error(`Записи ${id} нет в базе`);
   if (row.message_id) {
-    await deleteMessage(row.chat_id, row.message_id).catch((err) => {
-      log.warn(`Сообщение удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
-    });
+    await dropMessage(row.chat_id ?? driveChatId(), row.message_id, { method: row.method });
   }
   const { openDb } = await import('./db.js');
   openDb().prepare('DELETE FROM files WHERE id = ?').run(Number(id));

@@ -636,12 +636,23 @@ async function runChecks() {
             (member?.status === 'administrator' && member?.can_post_messages !== false);
           const title = chat.title ?? chat.username ?? String(chat.id);
           writeProfileStore({ chatTitle: title });
+
+          // Без права удалять бот может убрать только то, что послал сам,
+          // и только в первые двое суток. С правом — любое и когда угодно.
+          // Это не мешает отправке, поэтому предупреждаем, а не браним
+          const canDelete = member?.status === 'creator' || member?.can_delete_messages === true;
+
           result.chat = {
             ok: canPost,
             title,
             type: chat.type,
             isForum: Boolean(chat.is_forum),
             status: member?.status ?? 'unknown',
+            canDelete,
+            note: canPost && !canDelete
+              ? 'Боту не дали право удалять сообщения. Отправке это не мешает, но убрать файл '
+                + 'старше двух суток он не сможет — дайте это право в настройках чата'
+              : null,
             problem: canPost
               ? null
               : 'Бот не администратор чата или ему запрещено публиковать сообщения',

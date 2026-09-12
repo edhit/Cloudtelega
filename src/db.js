@@ -491,8 +491,8 @@ export function searchFiles({
 
   const rows = d
     .prepare(
-      `SELECT id, name, rel_path, size, kind, bucket, folder, note, status, taken_at, sent_at, message_id, chat_id, topic_id,
-              file_type, file_id, thumb_file_id, last_error
+      `SELECT id, name, rel_path, size, kind, bucket, folder, note, status, method, taken_at, sent_at,
+              message_id, chat_id, topic_id, file_type, file_id, thumb_file_id, last_error
          FROM files ${filter} ORDER BY ${column} ${order}, id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, size, from);
@@ -809,7 +809,7 @@ export function dropFolder(chatId, bucket, path) {
   const d = openDb();
   const like = `${path}/%`;
   const rows = d
-    .prepare('SELECT id, name, chat_id, message_id FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)')
+    .prepare('SELECT id, name, chat_id, message_id, method FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)')
     .all(bucket, path, like);
 
   d.prepare('DELETE FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)').run(bucket, path, like);

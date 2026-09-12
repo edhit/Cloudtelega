@@ -1074,6 +1074,8 @@ async function checkChat() {
       throw new Error('В этой группе не включены темы. Включите их в настройках группы или выключите папки по годам');
     }
     toast(`«${checks.chat.title}» готова принимать файлы`);
+    // Право удалять к отправке не относится, но без него не убрать старый файл
+    if (checks.chat.note) toast(checks.chat.note, true);
   } else {
     pill($('#chatStatus'), 'err', 'нет доступа');
     throw new Error(checks.chat?.problem ?? 'Группа не найдена. Проверьте, что бот добавлен администратором');
@@ -2612,17 +2614,28 @@ const fileOps = {
   },
 };
 
+/**
+ * Подпись правит только тот, кто послал сообщение: боту Telegram отвечает
+ * «message can't be edited» на всё чужое. Крупные файлы уходят аккаунтом,
+ * выложенные с телефона — человеком, и такие заметку из программы не примут.
+ */
+const noteEditable = (r) => r.method === 'bot' || (r.method === 'mtproto' && state?.settings.sessionSet);
+
 /** Один список действий — и для меню по правой кнопке, и для кнопки «⋯». */
 function fileMenuItems(r) {
-  return [
+  const items = [
     { label: 'Открыть в Telegram', art: CTX_ART.open, run: () => fileOps.open(r) },
     { label: 'Скачать на компьютер', art: CTX_ART.download, run: () => fileOps.download(r) },
     'sep',
-    { label: 'Заметка к файлу', art: CTX_ART.note, run: () => fileOps.note(r) },
+  ];
+
+  if (noteEditable(r)) items.push({ label: 'Заметка к файлу', art: CTX_ART.note, run: () => fileOps.note(r) });
+  items.push(
     { label: 'Переложить в папку…', art: CTX_ART.move, run: () => fileOps.move(r) },
     'sep',
     { label: 'Убрать с диска', art: CTX_ART.trash, danger: true, run: () => fileOps.remove(r) },
-  ];
+  );
+  return items;
 }
 
 const fileActions = (r, event) => openContextMenu(event, { title: r.name, items: fileMenuItems(r) });
