@@ -172,7 +172,7 @@ const BOT_API_HINTS = [
   [/blocked by the user/i, 'Пользователь заблокировал бота — писать ему бот не может.'],
   [/message thread not found|TOPIC_.*(CLOSED|DELETED)/i, 'Темы (топика) больше нет или она закрыта. Программа заведёт новую при следующей отправке.'],
   [/too many requests|flood/i, 'Telegram придержал бота за слишком частые запросы. Программа подождёт столько, сколько он просит.'],
-  [/file is too big|Request Entity Too Large/i, 'Файл больше того, что принимает бот (50 МБ). Для крупных нужен вход в аккаунт на шаге 3.'],
+  [/file is too big|Request Entity Too Large/i, 'Файл больше того, что принимает бот (50 МБ). Для крупных нужен вход в аккаунт — он в блоке «Этот профиль».'],
   [/wrong file identifier|file_id/i, 'Telegram не принял сохранённый идентификатор файла — возможно, сообщение удалили.'],
   [/PHOTO_INVALID|IMAGE_PROCESS_FAILED|PHOTO_EXT_INVALID/i, 'Telegram не смог обработать файл как фото. Программа отправит его документом.'],
   [/topic_?closed/i, 'Тема закрыта — писать в неё нельзя.'],

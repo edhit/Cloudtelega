@@ -177,7 +177,7 @@
 
     <!-- ── 2. Бот ────────────────────────────────────────────────────── -->
     <section class="pane" id="pane-bot">
-      <h1>Шаг 1. Создайте бота</h1>
+      <h1>Бот</h1>
       <p class="lead">Бот — это «почтальон», который будет складывать файлы в ваш канал. Создаётся он в самом Telegram, за минуту, бесплатно.</p>
 
       <div class="group-title">Что сделать в Telegram</div>
@@ -203,12 +203,41 @@
         <button class="btn btn-primary" id="saveBot">Подключить бота</button>
         <span id="botStatus" class="pill">не проверено</span>
       </div>
+
+      <!-- Управление с телефона — это про бота, поэтому живёт здесь,
+           а не в конце шагов настройки архива -->
+      <div class="group-title">Управление из Telegram</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label"><b>Отвечать на команды в Telegram</b><small id="botText">—</small></div>
+          <div class="row-side">
+            <span class="pill" id="botPill">—</span>
+            <button class="btn" id="botToggle">—</button>
+          </div>
+        </div>
+        <div class="row row-stack">
+          <div class="row-label"><b>Что можно написать боту</b></div>
+          <div class="cmdlist">
+            <div><span class="chip">/help</span> список команд</div>
+            <div><span class="chip">/stats</span> сколько уже в архиве</div>
+            <div><span class="chip">/scan</span> что нового на диске</div>
+            <div><span class="chip">/send</span> отправить всё новое</div>
+            <div><span class="chip">/devices</span> какие диски и телефоны видны</div>
+            <div><span class="chip">/drive</span> сколько файлов на диске</div>
+            <div><span class="chip">/access</span> выдать ссылку на доступ</div>
+            <div><span class="chip">/last</span> что ушло последним</div>
+          </div>
+          <p class="hint">Команды бот принимает только в личной переписке и только от владельцев —
+            их список на шаге «Как отправлять».</p>
+        </div>
+      </div>
+
       <div class="btn-row"><button class="btn" data-go="account">Дальше: ваш аккаунт →</button></div>
     </section>
 
     <!-- ── Куда складывать ───────────────────────────────────────────── -->
     <section class="pane" id="pane-chat">
-      <h1>Шаг 4. Куда складывать</h1>
+      <h1>Шаг 2. Куда складывать</h1>
       <p class="lead">Нужна приватная <b>группа с темами</b>. Темы — это папки внутри группы: программа заведёт «2019», «2020», «2021» и разложит снимки по годам сама. В канале тем не бывает, поэтому берём именно группу.</p>
 
       <div class="options">
@@ -286,7 +315,7 @@
 
     <!-- ── 4. Аккаунт ────────────────────────────────────────────────── -->
     <section class="pane" id="pane-account">
-      <h1>Шаг 3. Ваш аккаунт</h1>
+      <h1>Ваш аккаунт Telegram</h1>
       <p class="lead">Нужен по двум причинам. Первая: бот не умеет отправлять файлы тяжелее 50 МБ, а видео с iPhone почти всегда тяжелее. Вторая: бот не может создать группу — а ваш аккаунт может, и тогда следующий шаг сделается за вас одной кнопкой.</p>
 
       <div class="note">
@@ -350,7 +379,7 @@
 
     <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
     <section class="pane" id="pane-folders">
-      <h1>Шаг 4. Что отправлять</h1>
+      <h1>Шаг 3. Что отправлять</h1>
       <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со вложенными папками и сама отберёт медиафайлы: HEIC с iPhone, JPEG и MP4 с Android, RAW с фотоаппарата.</p>
 
       <div class="group-title">Выбранные папки</div>
@@ -381,7 +410,7 @@
 
     <!-- ── 6. Настройки отправки ─────────────────────────────────────── -->
     <section class="pane" id="pane-prefs">
-      <h1>Шаг 5. Как отправлять</h1>
+      <h1>Шаг 4. Как отправлять</h1>
       <p class="lead">Значения по умолчанию подходят большинству. Если не уверены — просто идите дальше.</p>
 
       <div class="group-title">Вид архива</div>
@@ -485,13 +514,6 @@
 
       <h2>Что дальше</h2>
       <div class="group">
-        <div class="row">
-          <div class="row-label"><b>Управление с телефона</b><small id="botText">—</small></div>
-          <div class="row-side">
-            <span class="pill" id="botPill">—</span>
-            <button class="btn" id="botToggle">—</button>
-          </div>
-        </div>
         <div class="row"><div class="row-label"><b>Диск можно подключать снова</b><small>Программа помнит отправленное и никогда не пришлёт один и тот же снимок дважды</small></div></div>
         <div class="row"><div class="row-label"><b>Разбор старых дублей</b><small id="cleanupText">Проверить, не ушли ли видео Live Photo отдельными сообщениями</small></div><button class="btn" id="doCleanup">Проверить</button></div>
       </div>
@@ -661,16 +683,12 @@
           </span>
           <div class="row-label">
             <b>Загрузить папку с компьютера</b>
-            <small>Перетаскивание берёт отдельные файлы. Целую папку со всеми вложенными — отсюда</small>
+            <small>Со всеми вложенными папками — дерево на диске повторит дерево на компьютере</small>
           </div>
           <button class="btn" id="driveAdd">Выбрать папку…</button>
-        </div>
-        <div class="row row-stack" id="driveQueueRow" hidden>
-          <div class="pathlist" id="driveQueue"></div>
-          <div class="btn-row">
-            <button class="btn btn-primary" id="driveUpload">Загрузить папку</button>
-            <button class="btn" id="driveQueueClear">Очистить</button>
-          </div>
+          <!-- webkitdirectory — единственный способ дать браузеру выбрать папку;
+               вместе с файлами он отдаёт и их путь внутри неё -->
+          <input type="file" id="driveDirInput" webkitdirectory directory multiple hidden>
         </div>
         <div class="row">
           <span class="row-glyph green">

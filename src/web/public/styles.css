@@ -718,6 +718,14 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
   color: color-mix(in srgb, var(--orange, #ff9500) 75%, var(--text));
 }
 
+/* Список команд бота: в две колонки, чтобы не тянулся простынёй */
+.cmdlist {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 7px 16px; margin-top: 10px;
+}
+.cmdlist > div { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--text-2); }
+.cmdlist .chip { flex: none; }
+
 /* ── шапка открытого хранилища ───────────────────────────────────────────── */
 
 .storage-head { margin-bottom: 22px; }

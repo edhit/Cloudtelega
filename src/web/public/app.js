@@ -884,8 +884,8 @@ function renderBot() {
     : bot.error
       ? `Не запустился: ${bot.error}`
       : !s.botTokenSet
-        ? 'Сначала подключите бота на шаге 2'
-        : 'Сначала укажите на шаге 6, кто может им командовать';
+        ? 'Сначала подключите бота — он в блоке «Этот профиль»'
+        : 'Сначала укажите на шаге «Как отправлять», кто может им командовать';
 }
 
 $('#botToggle').addEventListener('click', (e) => guard(e.target, async () => {
@@ -895,7 +895,7 @@ $('#botToggle').addEventListener('click', (e) => guard(e.target, async () => {
   toast(stopping ? 'Бот выключен' : 'Бот на связи — посмотрите Telegram');
 }));
 
-/* ── шаг 1: бот ──────────────────────────────────────────────────────────── */
+/* ── бот ─────────────────────────────────────────────────────────────────── */
 
 $('#saveBot').addEventListener('click', (e) => guard(e.target, async () => {
   const token = extract($('#botToken').value, 'token');
@@ -914,7 +914,7 @@ $('#saveBot').addEventListener('click', (e) => guard(e.target, async () => {
   }
 }));
 
-/* ── шаг 2: канал ────────────────────────────────────────────────────────── */
+/* ── шаг 2: куда складывать ──────────────────────────────────────────────── */
 
 function renderChatChip() {
   const s = state?.settings ?? {};
@@ -1010,7 +1010,7 @@ $('#topicYear').addEventListener('change', () => guard(null, async () => {
   await api('/api/settings', { TOPIC_MODE: $('#topicYear').checked ? 'year' : 'none' });
 }));
 
-/* ── шаг 3: аккаунт ──────────────────────────────────────────────────────── */
+/* ── ваш аккаунт ─────────────────────────────────────────────────────────── */
 
 let loginPoll = null;
 
@@ -1069,7 +1069,7 @@ $('#sendPass').addEventListener('click', (e) => guard(e.target, async () => {
   renderLogin(await api('/api/login/password', { password }));
 }));
 
-/* ── шаг 4: папки ────────────────────────────────────────────────────────── */
+/* ── шаг 3: что отправлять ───────────────────────────────────────────────── */
 
 function renderPaths() {
   const list = $('#pathList');
@@ -1328,7 +1328,7 @@ async function savePaths() {
   pill($('#pathStatus'), paths.length ? 'ok' : '', paths.length ? `сохранено, папок: ${paths.length}` : 'папки не выбраны');
 }
 
-/* ── шаг 5: настройки ────────────────────────────────────────────────────── */
+/* ── шаг 4: как отправлять ───────────────────────────────────────────────── */
 
 /** Настройки применяются сразу, как в системных настройках. */
 async function savePrefs() {
@@ -1779,7 +1779,7 @@ $('#goAccount').addEventListener('click', () => show('account'));
 $('#refreshTelegram').addEventListener('click', (e) => guard(e.target, async () => {
   if (!profileData?.accountConnected) {
     show('account');
-    toast('Войдите в аккаунт — это шаг 3');
+    toast('Войдите в аккаунт — он в блоке «Этот профиль» слева');
     return;
   }
   await api('/api/profile/refresh-telegram', {});
@@ -1885,7 +1885,6 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
 
 // Где мы сейчас: '' — корень, иначе имя папки
 const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null };
-let driveQueue = [];
 
 /**
  * Значки типов файлов — рисованные, а не эмодзи: эмодзи в каждой системе свои
@@ -2006,7 +2005,6 @@ async function loadDrive({ append = false } = {}) {
   drive.offset += data.rows.length;
   $('#driveMoreRow').hidden = drive.offset >= drive.total;
   $('#driveCounter').textContent = `Показано ${Math.min(drive.offset, drive.total)} из ${drive.total}`;
-  if (!append) renderDriveQueue();
 }
 
 // Что известно про чат диска — этим же пользуется шапка хранилища
@@ -2316,6 +2314,19 @@ $('#driveFileInput').addEventListener('change', () => {
 });
 
 /** Загружает выбранные файлы по одному, показывая полоску на каждый. */
+/**
+ * Куда на диске ляжет файл. Когда человек выбрал папку целиком, браузер
+ * отдаёт вместе с каждым файлом его путь внутри неё (webkitRelativePath) —
+ * из него и строим папку, чтобы дерево на диске совпало с деревом на
+ * компьютере. Обычные перетащенные файлы такого пути не имеют и ложатся
+ * туда, где человек стоит.
+ */
+function folderOfFile(file) {
+  const rel = file.webkitRelativePath || '';
+  const inside = rel.split('/').slice(0, -1).filter(Boolean).join('/');
+  return [drive.folder, inside].filter(Boolean).join('/');
+}
+
 async function uploadFiles(files) {
   if (!drive.data?.chatId) throw new Error('Сначала выберите чат для диска');
 
@@ -2338,12 +2349,12 @@ async function uploadFiles(files) {
   let failed = 0;
 
   for (const [i, file] of files.entries()) {
-    const row = uploadRow(file.name, file.size);
+    const row = uploadRow(file.name, file.size, folderOfFile(file));
     list.append(row.el);
     $('#uploadsSub').textContent = `${i + 1} из ${total} · ${humanSize(bytes)}`;
 
     try {
-      const res = await sendOneFile(file, drive.folder, row.progress);
+      const res = await sendOneFile(file, folderOfFile(file), row.progress);
       if (res.status === 'duplicate') { row.done('уже есть'); ok += 1; }
       else if (res.status === 'failed') { row.fail(res.error ?? 'не вышло'); failed += 1; }
       else { row.done('готово'); ok += 1; }
@@ -2416,7 +2427,7 @@ function sendOneFile(file, folder, onProgress) {
  * ушёл целиком, длина расти перестаёт, а он ещё едет в Telegram, поэтому
  * дальше полоса переливается: иначе выглядит как зависание на 100 %.
  */
-function uploadRow(name, size) {
+function uploadRow(name, size, folder = '') {
   const el = document.createElement('div');
   el.className = 'upload-row';
 
@@ -2426,6 +2437,13 @@ function uploadRow(name, size) {
   const label = document.createElement('span');
   label.className = 'upload-name';
   label.textContent = name;
+  // Когда грузят папку целиком, имена файлов повторяются — без пути
+  // непонятно, какой из десяти «отчёт.pdf» сейчас едет
+  if (folder) label.title = `${folder}/${name}`;
+  const where = document.createElement('small');
+  where.className = 'upload-where';
+  where.textContent = folder ? folder.split('/').join(' / ') : '';
+  if (folder) label.append(' ', where);
 
   const track = document.createElement('div');
   track.className = 'upload-track';
@@ -2529,42 +2547,25 @@ $('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive
 
 /* ── чат диска и загрузка папки целиком ──────────────────────────────────── */
 
-function renderDriveQueue() {
-  $('#driveQueueRow').hidden = !driveQueue.length;
-  renderChips($('#driveQueue'), driveQueue.map((p) => ({ id: p, label: p.split('/').pop() || p, title: p })), {
-    empty: '',
-    onRemove: (item) => {
-      driveQueue = driveQueue.filter((p) => p !== item.id);
-      renderDriveQueue();
-    },
-  });
-}
+// Настоящий выбор папки: браузер отдаёт файлы вместе с их путём внутри неё,
+// поэтому дерево на диске повторяет дерево на компьютере. Раньше здесь
+// спрашивали путь текстом, а потом перебрасывали в чужую вкладку — и то,
+// и другое сбивало с толку
+$('#driveAdd').addEventListener('click', () => $('#driveDirInput').click());
 
-$('#driveQueueClear').addEventListener('click', () => {
-  driveQueue = [];
-  renderDriveQueue();
+$('#driveDirInput').addEventListener('change', () => {
+  const files = [...($('#driveDirInput').files ?? [])];
+  $('#driveDirInput').value = '';
+  if (!files.length) return;
+
+  const top = files[0].webkitRelativePath?.split('/')[0] ?? '';
+  const depth = Math.max(...files.map((f) => (f.webkitRelativePath?.split('/').length ?? 1) - 1));
+  toast(top
+    ? `Папка «${top}»: ${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}`
+      + (depth > 1 ? `, вложенность ${depth}` : '')
+    : `Файлов: ${files.length}`);
+  guard(null, () => uploadFiles(files));
 });
-
-$('#driveAdd').addEventListener('click', () => guard(null, async () => {
-  const picked = await askText({
-    title: 'Какую папку загрузить',
-    text: 'Путь к папке на этом компьютере. Программа обойдёт её целиком, вложенные тоже.',
-    placeholder: '/home/me/Документы',
-    okText: 'Добавить',
-  });
-  if (!picked) return;
-  if (!driveQueue.includes(picked)) driveQueue.push(picked);
-  renderDriveQueue();
-}));
-
-$('#driveUpload').addEventListener('click', (e) => guard(e.target, async () => {
-  await api('/api/drive/upload', { paths: driveQueue, folder: drive.folder || undefined });
-  driveQueue = [];
-  renderDriveQueue();
-  toast('Загружаю — ход виден в разделе «Отправка»');
-  show('finish');
-  startPolling();
-}));
 
 $('#driveFolders').addEventListener('change', () => guard(null, async () => {
   await api('/api/settings', { DRIVE_FOLDERS: String($('#driveFolders').checked) });
@@ -3340,7 +3341,7 @@ $('#archiveMore').addEventListener('click', (e) => guard(e.target, loadMoreArchi
 
 $('#refreshArchive').addEventListener('click', (e) => guard(e.target, loadArchive));
 
-/* ── шаг 6: проверка и запуск ────────────────────────────────────────────── */
+/* ── загрузка с телефона или диска ───────────────────────────────────────── */
 
 async function runChecks() {
   try {
