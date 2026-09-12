@@ -1587,7 +1587,13 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
     try {
       const body = req.method === 'POST' ? await readBody(req) : {};
       const result = await handler(body);
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      // no-store обязателен: без него браузер отдаёт на повторный GET старый
+      // ответ из своего кэша, и «Показать диски и телефоны» показывает то же
+      // самое, сколько ни нажимай
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store, must-revalidate',
+      });
       res.end(JSON.stringify(result ?? {}));
     } catch (err) {
       // Наружу отдаём причину целиком: «fetch failed» пользователю ничего не говорит

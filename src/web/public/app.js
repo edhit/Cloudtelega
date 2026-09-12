@@ -10,9 +10,11 @@ let poller = null;
 /* ── помощники ───────────────────────────────────────────────────────────── */
 
 async function api(path, body) {
+  // no-store и здесь: список дисков и телефонов должен спрашиваться заново
+  // каждый раз, а не доставаться из кэша браузера
   const options = body
-    ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
-    : {};
+    ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' }
+    : { cache: 'no-store' };
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({ error: 'сервер ответил непонятно' }));
   if (!res.ok || data.error) throw new Error(data.error || `ошибка ${res.status}`);
@@ -885,7 +887,7 @@ function renderBot() {
       ? `Не запустился: ${bot.error}`
       : !s.botTokenSet
         ? 'Сначала подключите бота — он в блоке «Этот профиль»'
-        : 'Сначала укажите на шаге «Как отправлять», кто может им командовать';
+        : 'Сначала укажите здесь же, кто может им командовать';
 }
 
 $('#botToggle').addEventListener('click', (e) => guard(e.target, async () => {
@@ -1071,28 +1073,53 @@ $('#sendPass').addEventListener('click', (e) => guard(e.target, async () => {
 
 /* ── шаг 3: что отправлять ───────────────────────────────────────────────── */
 
+/**
+ * Выбранные папки. Показываем имя папки крупно, а полный путь — мелко под ним:
+ * раньше строка была одним длинным путём моноширинным шрифтом, который
+ * не помещался и обрывался на середине.
+ */
 function renderPaths() {
   const list = $('#pathList');
   list.innerHTML = '';
+
   if (!paths.length) {
-    list.innerHTML = '<p class="hint" style="margin:0">Пока ничего не выбрано.</p>';
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<div class="row-label"><b>Пока ничего не выбрано</b>'
+      + '<small>Добавьте папку со снимками — или подключите телефон и нажмите «Показать диски и телефоны»</small></div>';
+    list.append(row);
     return;
   }
+
   for (const p of paths) {
     const row = document.createElement('div');
-    row.className = 'pathitem';
-    const span = document.createElement('span');
-    span.className = 'mono';
-    span.textContent = p;
+    row.className = 'row';
+
+    const glyph = fileGlyph(p, { folder: true });
+    glyph.classList.add('glyph-sm');
+
+    const label = document.createElement('div');
+    label.className = 'row-label';
+    const name = document.createElement('b');
+    name.textContent = p.split('/').filter(Boolean).at(-1) || p;
+    const full = document.createElement('small');
+    full.className = 'path-full';
+    full.textContent = p;
+    full.title = p;
+    label.append(name, full);
+
     const del = document.createElement('button');
-    del.className = 'btn btn-danger';
-    del.textContent = 'Убрать';
+    del.className = 'icon-remove';
+    del.title = 'Убрать эту папку';
+    del.setAttribute('aria-label', `Убрать ${p}`);
+    del.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>';
     del.addEventListener('click', () => {
       paths = paths.filter((x) => x !== p);
       renderPaths();
       guard(null, savePaths);
     });
-    row.append(span, del);
+
+    row.append(glyph, label, del);
     list.append(row);
   }
 }
@@ -1104,7 +1131,11 @@ function addPath(p) {
   guard(null, savePaths);
 }
 
-async function loadDevices() {
+/**
+ * @param {{say?:boolean}} opts say — сказать вслух, что нашлось. Список часто
+ *   не меняется, и без этого нажатие выглядит так, будто ничего не случилось.
+ */
+async function loadDevices({ say = false } = {}) {
   const { mounts, phones, connect } = await api('/api/devices');
   const box = $('#disks');
   box.innerHTML = '';
@@ -1112,38 +1143,67 @@ async function loadDevices() {
   const group = document.createElement('div');
   group.className = 'group';
 
-  for (const phone of phones ?? []) {
+  // Значок подсказывает, что перед вами: телефон, диск или просто папка
+  const deviceGlyph = (tint, art) => {
+    const el = document.createElement('span');
+    el.className = 'glyph glyph-sm';
+    el.style.setProperty('--tint', tint);
+    el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${art}</svg>`;
+    return el;
+  };
+  const PHONE_ART = '<rect x="6.4" y="2.8" width="11.2" height="18.4" rx="2.6"/><path d="M10 5.6h4"/><path d="M10.4 18.4h3.2"/>';
+  const DISK_ART = '<rect x="3" y="5" width="18" height="6" rx="2"/><rect x="3" y="13" width="18" height="6" rx="2"/><circle cx="6.8" cy="8" r="1"/><circle cx="6.8" cy="16" r="1"/>';
+
+  const deviceRow = ({ glyph, title, sub, onPick }) => {
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = '<div class="row-label"><b></b><small></small></div>';
-    row.querySelector('b').textContent = phone.name;
-    row.querySelector('small').textContent =
-      phone.kind === 'android' ? 'Android подключён по кабелю' : 'iPhone подключён по кабелю';
-    group.append(row);
+    const label = document.createElement('div');
+    label.className = 'row-label';
+    const b = document.createElement('b');
+    b.textContent = title;
+    const small = document.createElement('small');
+    small.className = 'path-full';
+    small.textContent = sub;
+    small.title = sub;
+    label.append(b, small);
+    row.append(glyph, label);
+
+    if (onPick) {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = 'Выбрать';
+      btn.addEventListener('click', () => guard(btn, async () => onPick()));
+      row.append(btn);
+    }
+    return row;
+  };
+
+  for (const phone of phones ?? []) {
+    group.append(deviceRow({
+      glyph: deviceGlyph('#34c759', PHONE_ART),
+      title: phone.name,
+      sub: phone.kind === 'android' ? 'Android подключён по кабелю' : 'iPhone подключён по кабелю',
+    }));
   }
 
   for (const m of mounts) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = '<div class="row-label"><b class="mono"></b><small></small></div>';
-    row.querySelector('b').textContent = m.path;
-    row.querySelector('small').textContent = m.looksLikeIPhone
-      ? 'похоже на iPhone'
+    const kind = m.looksLikeIPhone
+      ? { tint: '#34c759', art: PHONE_ART, what: 'похоже на iPhone' }
       : m.looksLikeAndroid
-        ? 'похоже на Android'
-        : m.hasDcim
-          ? 'есть папка DCIM'
-          : 'диск или папка';
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary';
-    btn.textContent = 'Выбрать';
-    btn.addEventListener('click', () => {
-      addPath(m.dcimPath ?? m.path);
-      // На Android снимки из мессенджеров и скриншоты лежат вне DCIM
-      for (const extra of m.extraPaths ?? []) addPath(extra);
-    });
-    row.append(btn);
-    group.append(row);
+        ? { tint: '#34c759', art: PHONE_ART, what: 'похоже на Android' }
+        : { tint: '#8e8e93', art: DISK_ART, what: m.hasDcim ? 'есть папка DCIM' : 'диск или папка' };
+
+    group.append(deviceRow({
+      glyph: deviceGlyph(kind.tint, kind.art),
+      title: m.path.split('/').filter(Boolean).at(-1) || m.path,
+      sub: `${m.path} · ${kind.what}`,
+      onPick: () => {
+        addPath(m.dcimPath ?? m.path);
+        // На Android снимки из мессенджеров и скриншоты лежат вне DCIM
+        for (const extra of m.extraPaths ?? []) addPath(extra);
+        toast('Папка добавлена');
+      },
+    }));
   }
 
   if (!mounts.length && !phones?.length) {
@@ -1152,6 +1212,13 @@ async function loadDevices() {
   box.append(group);
 
   if (connect) renderConnectGuide(box, connect);
+
+  if (say) {
+    const parts = [];
+    if (phones?.length) parts.push(`${phones.length} ${plural(phones.length, 'телефон', 'телефона', 'телефонов')}`);
+    if (mounts.length) parts.push(`${mounts.length} ${plural(mounts.length, 'диск', 'диска', 'дисков')}`);
+    toast(parts.length ? `Нашлось: ${parts.join(', ')}` : 'Ничего не нашлось — подключите диск или телефон');
+  }
 }
 
 /* ── как подключить телефон: своя инструкция для каждой системы ──────────── */
@@ -1291,36 +1358,62 @@ function commandRow(command) {
   return row;
 }
 
-$('#findDisks').addEventListener('click', (e) => guard(e.target, loadDevices));
+$('#findDisks').addEventListener('click', (e) => guard(e.target, () => loadDevices({ say: true })));
 
-async function browseTo(target) {
-  const data = await api('/api/browse', { path: target });
-  $('#browser').hidden = false;
-  $('#browserPath').textContent = data.path;
-  $('#browserUp').disabled = !data.parent;
-  $('#browserUp').onclick = () => guard(null, () => browseTo(data.parent));
-  $('#browserPick').onclick = () => {
-    addPath(data.path);
-    $('#browser').hidden = true;
-  };
+/**
+ * Обзор папок компьютера — в окне, как и все остальные списки программы.
+ * Наверху путь, куда зашли, ниже вложенные папки, внизу одно действие:
+ * взять эту папку. Раньше обзор разворачивался прямо в странице и терялся
+ * среди всего остального.
+ */
+async function browseFolders() {
+  let here = null;
 
-  const list = $('#browserList');
-  list.innerHTML = '';
-  for (const dir of data.dirs) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.style.cursor = 'pointer';
-    row.innerHTML = '<div class="row-label"><b></b></div><span class="hint" style="margin:0">открыть ›</span>';
-    row.querySelector('b').textContent = dir.name;
-    row.addEventListener('click', () => guard(null, () => browseTo(dir.path)));
-    list.append(row);
-  }
-  if (!data.dirs.length) {
-    list.innerHTML = '<div class="row"><div class="row-label"><small>Внутри нет вложенных папок — можно выбрать эту</small></div></div>';
+  for (;;) {
+    const data = await api('/api/browse', { path: here });
+
+    const picked = await pickFromList({
+      title: data.path.split('/').filter(Boolean).at(-1) || data.path,
+      text: data.path,
+      items: [
+        {
+          id: '__pick__',
+          label: 'Взять эту папку',
+          sub: data.dirs.length
+            ? `Внутри ${data.dirs.length} ${plural(data.dirs.length, 'папка', 'папки', 'папок')} — их обойдём тоже`
+            : 'Вложенных папок нет',
+          art: '<path d="M11 3.6v10.8"/><path d="m6.8 10.2 4.2 4.2 4.2-4.2"/><path d="M4.4 16.4v1.2a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6v-1.2"/>',
+          tint: '#34c759',
+        },
+        ...(data.parent ? [{
+          id: '__up__',
+          label: 'Наверх',
+          sub: data.parent,
+          art: '<path d="M11 18.4V6"/><path d="m5.8 11.2 5.2-5.2 5.2 5.2"/>',
+          tint: '#8e8e93',
+        }] : []),
+        ...data.dirs.map((dir) => ({
+          id: dir.path,
+          label: dir.name,
+          sub: 'папка',
+          art: FOLDER_ART,
+          tint: '#007aff',
+        })),
+      ],
+      empty: 'Внутри нет вложенных папок — можно взять эту.',
+    });
+
+    if (!picked) return;
+    if (picked.id === '__pick__') {
+      addPath(data.path);
+      toast(`Папка добавлена: ${data.path.split('/').filter(Boolean).at(-1) || data.path}`);
+      return;
+    }
+    here = picked.id === '__up__' ? data.parent : picked.id;
   }
 }
 
-$('#addPath').addEventListener('click', (e) => guard(e.target, () => browseTo(null)));
+$('#addPath').addEventListener('click', (e) => guard(e.target.closest('button'), browseFolders));
 
 /** Папки сохраняются сразу — отдельной кнопки «Сохранить» нет. */
 async function savePaths() {

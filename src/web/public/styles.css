@@ -406,13 +406,6 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
 .log-warn { color: var(--orange); }
 .log-error { color: var(--red); }
 
-.pathlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.pathitem {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--bg); border-radius: 9px; padding: 8px 12px;
-}
-.pathitem .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .stat { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; }
 .stat.wide { grid-column: 1 / -1; }
@@ -725,6 +718,27 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
 }
 .cmdlist > div { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--text-2); }
 .cmdlist .chip { flex: none; }
+
+/* Длинный путь под именем папки: обрезаем с конца, целиком — в подсказке */
+.path-full {
+  display: block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Тихий крестик вместо красной кнопки «Убрать»: убрать папку из списка —
+   действие обратимое, пугать им незачем */
+.icon-remove {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: transparent; color: var(--text-3);
+  cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.15s var(--ease);
+}
+.icon-remove:hover { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+.icon-remove:active { transform: scale(0.9); }
+.icon-remove svg {
+  width: 15px; height: 15px;
+  fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round;
+}
 
 /* ── шапка открытого хранилища ───────────────────────────────────────────── */
 

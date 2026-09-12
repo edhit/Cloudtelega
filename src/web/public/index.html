@@ -216,6 +216,14 @@
           </div>
         </div>
         <div class="row row-stack">
+          <label class="field-label">Кто может командовать ботом</label>
+          <div class="chips" id="adminChips"></div>
+          <div class="btn-row">
+            <button class="btn" id="detectOwner">Добавить человека</button>
+            <span class="hint" style="margin:0" id="ownerHint">Покажу тех, кто уже писал боту, и ваш аккаунт</span>
+          </div>
+        </div>
+        <div class="row row-stack">
           <div class="row-label"><b>Что можно написать боту</b></div>
           <div class="cmdlist">
             <div><span class="chip">/help</span> список команд</div>
@@ -227,8 +235,8 @@
             <div><span class="chip">/access</span> выдать ссылку на доступ</div>
             <div><span class="chip">/last</span> что ушло последним</div>
           </div>
-          <p class="hint">Команды бот принимает только в личной переписке и только от владельцев —
-            их список на шаге «Как отправлять».</p>
+          <p class="hint">Команды бот принимает только в личной переписке и только от тех,
+            кто перечислен выше.</p>
         </div>
       </div>
 
@@ -383,23 +391,19 @@
       <p class="lead">Укажите папки, где лежат фото и видео. Программа обойдёт их вместе со вложенными папками и сама отберёт медиафайлы: HEIC с iPhone, JPEG и MP4 с Android, RAW с фотоаппарата.</p>
 
       <div class="group-title">Выбранные папки</div>
-      <div class="group" style="padding: 14px 16px">
-        <div class="pathlist" id="pathList"></div>
-        <div class="btn-row">
-          <button class="btn" id="addPath">Добавить папку…</button>
-          <button class="btn" id="findDisks">Показать диски и телефоны</button>
-        </div>
+      <div class="group" id="pathList"></div>
+      <div class="btn-row">
+        <button class="btn btn-icon" id="addPath">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M11 11.4v4.2M8.9 13.5h4.2"/></svg>
+          <span>Добавить папку…</span>
+        </button>
+        <button class="btn btn-icon" id="findDisks">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="5" width="17.2" height="6" rx="2"/><rect x="3.4" y="13" width="17.2" height="6" rx="2"/><circle cx="7.2" cy="8" r="1"/><circle cx="7.2" cy="16" r="1"/></svg>
+          <span>Показать диски и телефоны</span>
+        </button>
       </div>
 
       <div id="disks"></div>
-
-      <div class="group" id="browser" hidden>
-        <div class="row"><div class="row-label"><b id="browserPath" class="mono"></b></div>
-          <button class="btn" id="browserUp">Наверх</button>
-          <button class="btn btn-primary" id="browserPick">Выбрать эту папку</button>
-        </div>
-        <div id="browserList"></div>
-      </div>
 
       <div class="btn-row">
         <span id="pathStatus" class="pill">папки не выбраны</span>
@@ -458,18 +462,6 @@
             <label><input type="radio" name="previewkind" value="video"><span>Видео</span></label>
           </div>
           <span class="hint" style="margin:0">Это настоящая подпись — ровно такая уйдёт в Telegram</span>
-        </div>
-      </div>
-
-      <div class="group-title">Управление из Telegram</div>
-      <div class="group">
-        <div class="row row-stack">
-          <label class="field-label">Кто может командовать ботом</label>
-          <div class="chips" id="adminChips"></div>
-          <div class="btn-row">
-            <button class="btn" id="detectOwner">Добавить человека</button>
-            <span class="hint" style="margin:0" id="ownerHint">Покажу тех, кто уже писал боту, и ваш аккаунт</span>
-          </div>
         </div>
       </div>
 
