@@ -9,8 +9,8 @@ import { config, heicMode, livePhotoMode, pairPrefer, reloadConfig } from '../co
 import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import {
-  closeDb, countFiles, fileIdCoverage, listFiles, listGuests, listSeenChats, listTopics,
-  putSeenChat, searchFiles, sqliteDriver, stats,
+  closeDb, countFiles, fileIdCoverage, listAllFolders, listFiles, listGuests, listSeenChats,
+  listTopics, putSeenChat, searchFiles, sqliteDriver, stats,
 } from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
@@ -375,7 +375,7 @@ async function ensureChatNames() {
 }
 
 /** Страница диска: сводка плюс порция записей со ссылками на сообщения. */
-function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) {
+function drivePage({ query = '', status = '', offset = 0, folder = null, sort = 'date', dir = 'desc' } = {}) {
   // При поиске папку не сужаем: искать логично по всему диску
   const inFolder = String(query ?? '').trim() ? null : folder;
   const page = searchFiles({
@@ -385,6 +385,8 @@ function drivePage({ query = '', status = '', offset = 0, folder = null } = {}) 
     limit: 100,
     offset: Number(offset) || 0,
     folder: inFolder,
+    sort: String(sort ?? 'date'),
+    dir: String(dir ?? 'desc'),
   });
   return {
     ...driveOverview(),
@@ -981,6 +983,11 @@ const routes = {
   'POST /api/drive/remove': async (body) => removeFromDrive(Number(body?.id)),
 
   'POST /api/drive/folders': async (body) => driveFolders(body?.parent ?? ''),
+
+  // Всё дерево разом — окну «куда переложить», где ветки раскрывают руками
+  'POST /api/drive/tree': async () => ({
+    folders: listAllFolders(driveOverview().chatId, 'drive'),
+  }),
 
   'POST /api/drive/folder': async (body) => {
     const created = await createFolder(body?.name, body?.parent ?? '');

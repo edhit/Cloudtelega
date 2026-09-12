@@ -740,6 +740,82 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
   fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round;
 }
 
+/* Кнопка выбора порядка: в один ряд с поиском и видом списка */
+.sort-btn { flex: none; white-space: nowrap; }
+.sort-btn span { font-size: 13.5px; }
+
+/* Перетаскивание файла между папками */
+.file-card.dragging, .file-row.dragging { opacity: 0.4; }
+.drop-here {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel)) !important;
+  box-shadow: inset 0 0 0 2px var(--accent) !important;
+}
+.crumbs button.drop-here { border-radius: 8px; }
+
+/* ── дерево папок в окне «куда переложить» ───────────────────────────────── */
+
+.tree { max-height: min(52vh, 380px); overflow-y: auto; margin-top: 14px; text-align: left; }
+.tree-row { display: flex; align-items: center; gap: 2px; padding-left: calc(var(--depth, 0) * 18px); }
+
+.tree-twist {
+  width: 24px; height: 24px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer;
+  transition: background 0.15s, transform 0.16s var(--ease);
+}
+.tree-twist:disabled { opacity: 0; pointer-events: none; }
+.tree-twist:hover { background: var(--chip); color: var(--text); }
+.tree-twist[aria-expanded='true'] svg { transform: rotate(90deg); }
+.tree-twist svg {
+  width: 14px; height: 14px;
+  fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 0.16s var(--ease);
+}
+
+.tree-pick {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 6px 4px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.15s;
+}
+.tree-pick:hover:not(:disabled) { background: var(--chip); }
+.tree-pick:disabled { opacity: 0.5; cursor: default; }
+.tree-pick .glyph { width: 30px; height: 30px; border-radius: 9px; }
+.tree-pick .glyph svg { width: 16px; height: 16px; }
+.tree-label { display: grid; gap: 1px; min-width: 0; }
+.tree-label b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-label small { font-size: 11.5px; color: var(--text-3); }
+
+/* ── меню по правой кнопке ───────────────────────────────────────────────── */
+
+.ctx {
+  position: fixed; z-index: 90; min-width: 216px; max-width: 280px;
+  padding: 6px; border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  animation: ctx-in 0.12s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+@keyframes ctx-in { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.ctx-title {
+  display: block; padding: 6px 10px 8px; color: var(--text-3);
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ctx button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; font-size: 13.5px;
+  text-align: left; cursor: pointer;
+}
+.ctx button:hover { background: var(--accent); color: #fff; }
+.ctx button.danger { color: var(--red); }
+.ctx button.danger:hover { background: var(--red); color: #fff; }
+.ctx button svg {
+  width: 17px; height: 17px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.ctx hr { border: 0; border-top: 1px solid var(--sep); margin: 5px 8px; }
+
 /* ── шапка открытого хранилища ───────────────────────────────────────────── */
 
 .storage-head { margin-bottom: 22px; }

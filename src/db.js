@@ -443,7 +443,18 @@ export function countFiles(bucket = 'photos') {
  * LIKE в SQLite различает регистр за пределами латиницы, поэтому ищем сразу
  * по нескольким написаниям запроса.
  */
-export function searchFiles({ query = '', status = '', limit = 100, offset = 0, bucket = 'photos', folder = null } = {}) {
+// По чему можно сортировать. Список закрытый: имя столбца уходит в SQL,
+// и подставлять туда что попало из запроса нельзя
+const SORT_COLUMNS = {
+  date: 'COALESCE(sent_at, taken_at, id)',
+  name: 'name COLLATE NOCASE',
+  size: 'size',
+};
+
+export function searchFiles({
+  query = '', status = '', limit = 100, offset = 0, bucket = 'photos', folder = null,
+  sort = 'date', dir = 'desc',
+} = {}) {
   const size = Math.max(1, Math.min(500, Number(limit) || 100));
   const from = Math.max(0, Number(offset) || 0);
 
@@ -475,15 +486,18 @@ export function searchFiles({ query = '', status = '', limit = 100, offset = 0, 
   const filter = `WHERE ${where.join(' AND ')}`;
   const d = openDb();
   const total = Number(d.prepare(`SELECT COUNT(*) n FROM files ${filter}`).get(...params)?.n ?? 0);
+  const column = SORT_COLUMNS[sort] ?? SORT_COLUMNS.date;
+  const order = String(dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
   const rows = d
     .prepare(
       `SELECT id, name, rel_path, size, kind, bucket, folder, note, status, taken_at, sent_at, message_id, chat_id, topic_id,
               file_type, file_id, thumb_file_id, last_error
-         FROM files ${filter} ORDER BY id DESC LIMIT ? OFFSET ?`,
+         FROM files ${filter} ORDER BY ${column} ${order}, id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, size, from);
 
-  return { rows, total, offset: from, limit: size };
+  return { rows, total, offset: from, limit: size, sort, dir: order.toLowerCase() };
 }
 
 /** Сколько отправленного мы можем переиспользовать по file_id. */
@@ -757,6 +771,23 @@ export function listDriveFolders(chatId, bucket = 'drive', parent = '') {
   }
 
   return [...children.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+/**
+ * Все папки хранилища разом, отсортированные по пути. Нужны окну «куда
+ * переложить»: дерево там раскрывают и сворачивают, и тянуть каждый уровень
+ * отдельным запросом было бы и медленно, и заметно глазу.
+ */
+export function listAllFolders(chatId, bucket = 'drive') {
+  return [...knownFolderPaths(chatId, bucket).values()]
+    .map((e) => ({
+      path: e.path,
+      name: e.path.split('/').at(-1),
+      depth: e.path.split('/').length - 1,
+      n: e.n,
+      bytes: e.bytes,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path, 'ru'));
 }
 
 /** Сколько файлов лежит прямо в этой папке (пусто — корень диска). */

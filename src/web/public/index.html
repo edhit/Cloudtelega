@@ -643,6 +643,10 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>
           </button>
         </label>
+        <button class="btn btn-icon sort-btn" id="driveSort" title="Как сортировать">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5.4v13.2"/><path d="m4 8.4 3-3 3 3"/><path d="M13.4 7h7"/><path d="M13.4 12h5"/><path d="M13.4 17h3"/></svg>
+          <span id="driveSortText">Сначала новые</span>
+        </button>
         <div class="seg seg-icons" id="segDriveView">
           <label title="Плиткой"><input type="radio" name="driveview" value="grid" checked><span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.6"/><rect x="11" y="3" width="6" height="6" rx="1.6"/><rect x="3" y="11" width="6" height="6" rx="1.6"/><rect x="11" y="11" width="6" height="6" rx="1.6"/></svg>
@@ -864,6 +868,13 @@
   </div>
   <div id="uploadsList"></div>
 </div>
+
+<!--
+  Меню по правой кнопке, как в проводнике: появляется у курсора, закрывается
+  щелчком мимо, Escape или прокруткой. Одно на всю страницу — списков много,
+  а меню в каждый момент открыто ровно одно.
+-->
+<div class="ctx" id="ctxMenu" hidden role="menu"></div>
 
 <div class="modal-backdrop" id="modal" hidden>
   <div class="modal-card">

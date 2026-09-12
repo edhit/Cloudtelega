@@ -247,6 +247,84 @@ function lockGlyph(locked) {
   return el;
 }
 
+/* ── меню по правой кнопке ───────────────────────────────────────────────── */
+
+const CTX_ART = {
+  download: '<path d="M11 3.6v10.8"/><path d="m6.8 10.2 4.2 4.2 4.2-4.2"/><path d="M4.4 16.4v1.2a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6v-1.2"/>',
+  note: '<path d="M4.6 17.4h3.2l8-8a2.1 2.1 0 0 0-3-3l-8 8v3Z"/><path d="M13.4 5.6l3 3"/>',
+  move: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/><path d="M8.6 12.4h5"/><path d="m11.6 10.4 2 2-2 2"/>',
+  open: '<path d="M9.4 4.6H5.6a1.6 1.6 0 0 0-1.6 1.6v10a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6v-3.8"/><path d="M13 4h5v5"/><path d="m10.2 11.8 7.4-7.4"/>',
+  folder: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/>',
+  sort: '<path d="M6.4 4.6v12.8"/><path d="m3.6 7.4 2.8-2.8 2.8 2.8"/><path d="M12.2 6.4h6.2"/><path d="M12.2 11h4.4"/><path d="M12.2 15.6h2.6"/>',
+  trash: '<path d="M4.6 6.4h12.8"/><path d="M8.6 6.4V4.8h4.8v1.6"/><path d="m6.2 6.4.8 10.2a1.6 1.6 0 0 0 1.6 1.4h4.8a1.6 1.6 0 0 0 1.6-1.4l.8-10.2"/>',
+};
+
+let ctxClose = null;
+
+/**
+ * Показывает меню у курсора. Пункт — { label, art, danger, run }.
+ * Разделитель — строка 'sep'.
+ */
+function openContextMenu(event, { title, items }) {
+  event.preventDefault();
+  closeContextMenu();
+
+  const menu = $('#ctxMenu');
+  menu.innerHTML = '';
+  menu.hidden = false;
+
+  if (title) {
+    const head = document.createElement('span');
+    head.className = 'ctx-title';
+    head.textContent = title;
+    menu.append(head);
+  }
+
+  for (const item of items) {
+    if (item === 'sep') {
+      menu.append(document.createElement('hr'));
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('role', 'menuitem');
+    if (item.danger) btn.classList.add('danger');
+    btn.innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true">${item.art ?? ''}</svg>`;
+    btn.append(item.label);
+    btn.addEventListener('click', () => {
+      closeContextMenu();
+      guard(null, item.run);
+    });
+    menu.append(btn);
+  }
+
+  // Ставим у курсора, но не даём вылезти за край окна
+  const { innerWidth: w, innerHeight: h } = window;
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, w - box.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, h - box.height - 8)}px`;
+
+  const away = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
+  const key = (e) => { if (e.key === 'Escape') closeContextMenu(); };
+  setTimeout(() => {
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    window.addEventListener('scroll', closeContextMenu, true);
+  }, 0);
+
+  ctxClose = () => {
+    document.removeEventListener('mousedown', away);
+    document.removeEventListener('keydown', key);
+    window.removeEventListener('scroll', closeContextMenu, true);
+    menu.hidden = true;
+    ctxClose = null;
+  };
+}
+
+function closeContextMenu() {
+  ctxClose?.();
+}
+
 let toastTimer = null;
 function toast(text, isError = false) {
   const el = $('#toast');
@@ -1977,7 +2055,18 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
 /* ── диск: настоящий файловый менеджер ───────────────────────────────────── */
 
 // Где мы сейчас: '' — корень, иначе имя папки
-const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null };
+const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null, sort: 'date', dir: 'desc' };
+
+// Порядок в списке. Название говорит, что получится, а не как это устроено:
+// «сначала новые» понятнее, чем «по дате, по убыванию»
+const SORTS = [
+  { sort: 'date', dir: 'desc', label: 'Сначала новые' },
+  { sort: 'date', dir: 'asc', label: 'Сначала старые' },
+  { sort: 'name', dir: 'asc', label: 'По имени, А–Я' },
+  { sort: 'name', dir: 'desc', label: 'По имени, Я–А' },
+  { sort: 'size', dir: 'desc', label: 'Сначала крупные' },
+  { sort: 'size', dir: 'asc', label: 'Сначала мелкие' },
+];
 
 /**
  * Значки типов файлов — рисованные, а не эмодзи: эмодзи в каждой системе свои
@@ -2077,6 +2166,8 @@ async function loadDrive({ append = false } = {}) {
     query: drive.query,
     folder: drive.query ? null : drive.folder,
     offset: drive.offset,
+    sort: drive.sort,
+    dir: drive.dir,
   });
   drive.data = data;
   drive.total = data.total;
@@ -2139,6 +2230,23 @@ function renderCrumbs() {
       const btn = document.createElement('button');
       btn.textContent = crumb.label;
       btn.addEventListener('click', () => guard(null, () => openFolder(crumb.path)));
+
+      // На крошку тоже можно бросить файл — так его поднимают на уровень выше
+      btn.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+        e.preventDefault();
+        btn.classList.add('drop-here');
+      });
+      btn.addEventListener('dragleave', () => btn.classList.remove('drop-here'));
+      btn.addEventListener('drop', (e) => {
+        if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        btn.classList.remove('drop-here');
+        const file = dragged;
+        if (file) guard(null, () => moveFileTo(file, crumb.path));
+      });
+
       box.append(btn);
     }
   }
@@ -2202,40 +2310,48 @@ function folderCard(folder) {
   menu.title = 'Что сделать с папкой';
   menu.addEventListener('click', (e) => {
     e.stopPropagation();
-    guard(null, () => folderActions(folder));
+    folderActions(folder, e);
   });
 
   card.append(fileGlyph(folder.name, { folder: true }), name, sub, menu);
   card.addEventListener('click', () => guard(null, () => openFolder(folder.path)));
+  card.addEventListener('contextmenu', (e) => folderActions(folder, e));
+
+  // Папка принимает перетащенный файл — и подсвечивается, пока его держат над ней
+  card.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    card.classList.add('drop-here');
+  });
+  card.addEventListener('dragleave', () => card.classList.remove('drop-here'));
+  card.addEventListener('drop', (e) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    card.classList.remove('drop-here');
+    const file = dragged;
+    if (file) guard(null, () => moveFileTo(file, folder.path));
+  });
+
   return card;
 }
 
-async function folderActions(folder) {
+function folderActions(folder, event) {
+  return openContextMenu(event, {
+    title: folder.name,
+    items: [
+      { label: 'Открыть', art: CTX_ART.folder, run: () => openFolder(folder.path) },
+      'sep',
+      { label: 'Удалить папку', art: CTX_ART.trash, danger: true, run: () => removeFolderAsked(folder) },
+    ],
+  });
+}
+
+async function removeFolderAsked(folder) {
   const inside = [];
   if (folder.folders) inside.push(`${folder.folders} ${plural(folder.folders, 'папка', 'папки', 'папок')}`);
   if (folder.n) inside.push(`${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')}`);
-
-  const picked = await pickFromList({
-    title: folder.name,
-    text: inside.length ? `Внутри: ${inside.join(', ')}.` : 'Папка пустая.',
-    items: [
-      {
-        id: 'open',
-        label: 'Открыть',
-        sub: 'Посмотреть, что внутри',
-        art: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/>',
-      },
-      {
-        id: 'remove',
-        label: 'Удалить папку',
-        sub: 'Вместе со всем, что внутри — и в Telegram тоже',
-        art: MODAL_ICONS.trash.art,
-        tint: MODAL_ICONS.trash.tint,
-      },
-    ],
-  });
-  if (!picked) return;
-  if (picked.id === 'open') return openFolder(folder.path);
 
   // Удаление темы Telegram не отменяет: спрашиваем прямо, что будет
   const ok = await askConfirm({
@@ -2270,9 +2386,15 @@ function fileCard(r) {
 
   const sub = document.createElement('span');
   sub.className = 'file-sub';
-  sub.textContent = r.status === 'sent'
-    ? humanSize(r.size) + (drive.query && r.folder ? ` · ${r.folder}` : '')
-    : (r.last_error ? 'не ушёл' : 'в очереди');
+  if (r.status !== 'sent') {
+    sub.textContent = r.last_error ? 'не ушёл' : 'в очереди';
+  } else {
+    // Дату загрузки видно сразу: без неё непонятно, что тут новое,
+    // а что лежит с прошлого года
+    const parts = [humanSize(r.size), whenAdded(r)];
+    if (drive.query && r.folder) parts.push(r.folder.split('/').join(' / '));
+    sub.textContent = parts.filter(Boolean).join(' · ');
+  }
 
   const menu = document.createElement('button');
   menu.className = 'file-menu';
@@ -2280,43 +2402,177 @@ function fileCard(r) {
   menu.title = 'Что сделать';
   menu.addEventListener('click', (e) => {
     e.stopPropagation();
-    guard(null, () => fileActions(r));
+    fileActions(r, e);
   });
 
   card.append(icon, name, sub, menu);
-  // Щелчок по файлу открывает само сообщение в Telegram
+
+  // Щелчок открывает само сообщение в Telegram, правая кнопка — меню действий
   card.addEventListener('click', () => {
     if (r.link) window.open(r.link, '_blank', 'noopener');
     else toast('Файл ещё не отправлен', true);
   });
+  card.addEventListener('contextmenu', (e) => fileActions(r, e));
+
+  // Перетаскивание: файл можно бросить на папку — как в проводнике
+  card.draggable = true;
+  card.addEventListener('dragstart', (e) => {
+    dragged = r;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    // Свой тип, чтобы отличать наш файл от файлов, притащенных из системы
+    e.dataTransfer.setData(DRAG_TYPE, String(r.id));
+    e.dataTransfer.setData('text/plain', r.name);
+  });
+  card.addEventListener('dragend', () => {
+    dragged = null;
+    card.classList.remove('dragging');
+  });
+
   return card;
 }
 
-async function fileActions(r) {
-  const items = [
-    { id: 'download', label: 'Скачать на компьютер', sub: 'Вернуть файл из Telegram' },
-    { id: 'note', label: 'Заметка к файлу', sub: 'Подпись под файлом прямо в Telegram' },
-    { id: 'move', label: 'Переложить в папку', sub: 'Сменить папку на диске' },
-    { id: 'open', label: 'Открыть в Telegram', sub: 'Показать само сообщение' },
-    { id: 'remove', label: 'Убрать с диска', sub: 'Удалить сообщение и запись' },
-  ];
-  const picked = await pickFromList({ title: r.name, text: humanSize(r.size), items, empty: '' });
-  if (!picked) return;
+/** Когда файл попал на диск. «Сегодня» и «вчера» читаются лучше даты. */
+function whenAdded(r) {
+  const ms = Number(r.sent_at || r.taken_at || 0);
+  if (!ms) return '';
 
-  if (picked.id === 'open') {
-    if (r.link) window.open(r.link, '_blank', 'noopener');
-    return;
+  const date = new Date(ms);
+  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((day(new Date()) - day(date)) / 86400000);
+
+  if (days === 0) return `сегодня, ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  if (days === 1) return 'вчера';
+  if (days < 7) return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
+
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+/* ── перетаскивание файлов по папкам ─────────────────────────────────────── */
+
+// Свой тип данных: по нему отличаем свой файл из списка от файлов,
+// притащенных из системы, — их принимает вся область целиком
+const DRAG_TYPE = 'application/x-cloudtelega-file';
+let dragged = null;
+
+/* ── дерево папок: раскрывается и сворачивается ──────────────────────────── */
+
+// Какие ветки человек раскрыл — помним между открытиями окна
+const treeOpen = new Set();
+
+/**
+ * Окно «куда переложить»: всё дерево папок сразу, ветки раскрываются
+ * треугольником. Плоский список годился, пока папки не вкладывались друг
+ * в друга; теперь по нему было бы не понять, что во что входит.
+ *
+ * @param {{skip?:string}} opts skip — папка, в которой файл уже лежит:
+ *   перекладывать в неё же и в её подпапки бессмысленно и вредно
+ * @returns {Promise<string|null>} путь папки, '' — корень, null — отменили
+ */
+async function pickFolderTree({ title, text, skip = '' }) {
+  const { folders } = await api('/api/drive/tree', {});
+
+  return openModal({
+    title,
+    text,
+    okText: '',
+    cancelText: 'Закрыть',
+    build: (body) => {
+      const box = document.createElement('div');
+      box.className = 'tree';
+
+      // Ветка видна, если раскрыты все её родители
+      const visible = (f) => f.path
+        .split('/')
+        .slice(0, -1)
+        .every((_, i, parts) => treeOpen.has(parts.slice(0, i + 1).join('/')));
+
+      const draw = () => {
+        box.innerHTML = '';
+        box.append(treeRow({ path: '', name: 'Корень диска', depth: 0, n: 0 }, folders, skip, draw));
+        for (const f of folders) if (visible(f)) box.append(treeRow(f, folders, skip, draw));
+      };
+
+      draw();
+      body.append(box);
+      return null;
+    },
+    collect: () => null,
+  });
+}
+
+function treeRow(folder, all, skip, redraw) {
+  const row = document.createElement('div');
+  row.className = 'tree-row';
+  row.style.setProperty('--depth', folder.depth ?? 0);
+
+  // У корня треугольника нет: верхние папки видны всегда, и сворачивать
+  // их было бы нечем — получилась бы кнопка, которая ничего не делает
+  const hasKids = Boolean(folder.path) && all.some((f) => f.path.startsWith(`${folder.path}/`));
+  const open = treeOpen.has(folder.path);
+
+  // Треугольник — отдельная кнопка рядом: раскрыть ветку и выбрать папку
+  // это разные намерения, и мешать их в один щелчок нельзя
+  const twist = document.createElement('button');
+  twist.className = 'tree-twist';
+  twist.type = 'button';
+  twist.disabled = !hasKids;
+  if (hasKids) {
+    twist.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5.5 5 4.5-5 4.5"/></svg>';
+    twist.setAttribute('aria-expanded', String(open));
+    twist.title = open ? 'Свернуть' : 'Раскрыть';
+    twist.addEventListener('click', () => {
+      if (open) treeOpen.delete(folder.path);
+      else treeOpen.add(folder.path);
+      redraw();
+    });
   }
 
-  if (picked.id === 'download') {
+  const glyph = fileGlyph(folder.name, { folder: true });
+  glyph.classList.add('glyph-sm');
+
+  const name = document.createElement('b');
+  name.textContent = folder.name;
+  const sub = document.createElement('small');
+  sub.textContent = folder.n ? `${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')}` : 'пусто';
+
+  const label = document.createElement('span');
+  label.className = 'tree-label';
+  label.append(name, sub);
+
+  const pick = document.createElement('button');
+  pick.className = 'tree-pick';
+  pick.type = 'button';
+  pick.append(glyph, label);
+
+  if (folder.path === skip) {
+    pick.disabled = true;
+    sub.textContent = 'файл уже здесь';
+  } else {
+    pick.addEventListener('click', () => closeModal(folder.path));
+  }
+
+  row.append(twist, pick);
+  return row;
+}
+
+/* ── действия над файлом ─────────────────────────────────────────────────── */
+
+const fileOps = {
+  open: (r) => {
+    if (!r.link) throw new Error('Сообщение ещё не отправлено');
+    window.open(r.link, '_blank', 'noopener');
+  },
+
+  download: async (r) => {
     const saved = await api('/api/drive/download', { id: r.id });
     toast(`Скачано: ${saved.name} → ${saved.path}`);
-    return;
-  }
+  },
 
-  if (picked.id === 'note') {
-    // Подпись живёт в самом сообщении: её видят все, кто открыл чат,
-    // и правится она в любой момент — ради этого и берут канал
+  // Подпись живёт в самом сообщении: её видят все, кто открыл чат,
+  // и правится она в любой момент — ради этого и берут канал
+  note: async (r) => {
     const text = await askText({
       title: 'Заметка к файлу',
       text: 'Подпись под файлом в Telegram. Её увидят все, у кого есть доступ к чату, и вы сможете поправить её в любой момент.',
@@ -2329,38 +2585,52 @@ async function fileActions(r) {
     await api('/api/drive/note', { id: r.id, note: text });
     await loadDrive();
     toast(text ? 'Заметка сохранена' : 'Заметка убрана');
-    return;
-  }
+  },
 
-  if (picked.id === 'move') {
-    const folders = drive.data?.list ?? [];
-    const target = await pickFromList({
+  move: async (r) => {
+    const target = await pickFolderTree({
       title: 'Куда переложить',
       text: 'В самом Telegram сообщение останется на месте — меняется только папка на диске.',
-      items: [
-        { id: '', label: 'В корень диска' },
-        ...folders.map((f) => ({ id: f.path, label: f.name, sub: `${f.n} ${plural(f.n, 'файл', 'файла', 'файлов')}` })),
-      ],
-      empty: 'Папок пока нет — создайте первую кнопкой «Новая папка».',
+      skip: r.folder ?? '',
     });
-    if (!target) return;
-    await api('/api/drive/move', { id: r.id, folder: target.id, from: drive.folder });
-    await loadDrive();
-    toast(target.id ? `Переложено в «${target.id}»` : 'Переложено в корень');
-    return;
-  }
+    if (target === null) return;
+    await moveFileTo(r, target);
+  },
 
-  const ok = await askConfirm({
-    title: `Убрать ${r.name} с диска?`,
-    text: 'Сообщение в Telegram будет удалено. Файл на компьютере, если он там есть, останется.',
-    icon: 'trash',
-    okText: 'Убрать',
-    danger: true,
-  });
-  if (!ok) return;
-  await api('/api/drive/remove', { id: r.id });
+  remove: async (r) => {
+    const ok = await askConfirm({
+      title: `Убрать ${r.name} с диска?`,
+      text: 'Сообщение в Telegram будет удалено. Файл на компьютере, если он там есть, останется.',
+      icon: 'trash',
+      okText: 'Убрать',
+      danger: true,
+    });
+    if (!ok) return;
+    await api('/api/drive/remove', { id: r.id });
+    await loadDrive();
+    toast('Убрано с диска');
+  },
+};
+
+/** Один список действий — и для меню по правой кнопке, и для кнопки «⋯». */
+function fileMenuItems(r) {
+  return [
+    { label: 'Открыть в Telegram', art: CTX_ART.open, run: () => fileOps.open(r) },
+    { label: 'Скачать на компьютер', art: CTX_ART.download, run: () => fileOps.download(r) },
+    'sep',
+    { label: 'Заметка к файлу', art: CTX_ART.note, run: () => fileOps.note(r) },
+    { label: 'Переложить в папку…', art: CTX_ART.move, run: () => fileOps.move(r) },
+    'sep',
+    { label: 'Убрать с диска', art: CTX_ART.trash, danger: true, run: () => fileOps.remove(r) },
+  ];
+}
+
+const fileActions = (r, event) => openContextMenu(event, { title: r.name, items: fileMenuItems(r) });
+
+async function moveFileTo(r, folder) {
+  await api('/api/drive/move', { id: r.id, folder, from: drive.folder });
   await loadDrive();
-  toast('Убрано с диска');
+  toast(folder ? `«${r.name}» → ${folder.split('/').join(' / ')}` : `«${r.name}» → корень диска`);
 }
 
 async function openFolder(name) {
@@ -2392,12 +2662,30 @@ dropZone().addEventListener('dragleave', () => {
   if (!dragDepth) dropZone().classList.remove('over');
 });
 dropZone().addEventListener('drop', (e) => {
+  // Свой файл, который тащат между папками, сюда не относится:
+  // его ловят сами папки, а мимо папки — значит, передумали
+  if (!e.dataTransfer?.types?.includes('Files')) return;
   e.preventDefault();
   dragDepth = 0;
   dropZone().classList.remove('over');
   const files = [...(e.dataTransfer?.files ?? [])];
   if (files.length) guard(null, () => uploadFiles(files));
 });
+
+// Порядок выбирают из того же меню, что и всё остальное в программе
+$('#driveSort').addEventListener('click', (e) => openContextMenu(e, {
+  title: 'Как сортировать',
+  items: SORTS.map((option) => ({
+    label: option.sort === drive.sort && option.dir === drive.dir ? `✓ ${option.label}` : option.label,
+    art: CTX_ART.sort,
+    run: async () => {
+      drive.sort = option.sort;
+      drive.dir = option.dir;
+      $('#driveSortText').textContent = option.label;
+      await loadDrive();
+    },
+  })),
+}));
 
 $('#drivePickFiles').addEventListener('click', () => $('#driveFileInput').click());
 $('#driveFileInput').addEventListener('change', () => {
