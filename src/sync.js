@@ -21,12 +21,19 @@ import { config } from './config.js';
 import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import { exportRows, getMeta, importRows, setMeta } from './db.js';
-import { botConfigured, sendFileViaBot } from './telegram/botApi.js';
+import {
+  botConfigured, deleteMessage, getChat, pinChatMessage, sendFileViaBot,
+} from './telegram/botApi.js';
 import { downloadMessageFile, mtprotoConfigured } from './telegram/mtproto.js';
 
 // Формат снимка. Меняется — старые снимки перестают читаться, поэтому
 // номер проверяется на входе, а не угадывается
 const FORMAT = 1;
+
+// Имя файла и метка в подписи: по ним список узнают в чате — и мы,
+// и человек, который туда заглянет
+const SNAPSHOT_FILE = (bucket) => `cloudtelega-${bucket}.json`;
+const SNAPSHOT_MARK = 'Список файлов';
 
 const BUCKETS = {
   drive: { bucket: 'drive', title: 'Диск', chat: () => config.driveChatId || config.chatId },
@@ -87,27 +94,85 @@ export async function publishSnapshot(id) {
   if (!botConfigured()) throw new Error('Не настроен бот — отправлять список некому');
 
   const { file, rows } = await writeSnapshot(id);
+  const chatId = target.chat();
+  const previous = Number(getMeta(`sync_published_${target.bucket}`) ?? 0) || null;
+
   try {
     const stat = await fs.stat(file);
     const result = await sendFileViaBot({
       filePath: file,
-      fileName: `cloudtelega-${target.bucket}.json`,
+      fileName: SNAPSHOT_FILE(target.bucket),
       size: stat.size,
       mime: 'application/json',
       kind: 'document',
       asDocument: true,
-      caption: `Список файлов «${target.title}»: ${rows} ${rows === 1 ? 'запись' : 'записей'}\n`
-        + `Снят ${new Date().toLocaleString('ru-RU')}. Программа читает его сама — удалять не нужно.`,
-      chatId: target.chat(),
+      caption: `${SNAPSHOT_MARK} «${target.title}»: ${rows} ${rows === 1 ? 'запись' : 'записей'}\n`
+        + `Обновлён ${new Date().toLocaleString('ru-RU')}. Программа читает его сама — удалять не нужно.`,
+      chatId,
     });
+
+    // Закрепляем: по закреплённому сообщению список находится на любом
+    // компьютере, даже там, где базы ещё нет вовсе
+    await pinChatMessage(chatId, result.messageId).catch((err) => {
+      log.warn(`Список не закрепился: ${describeError(err, { kind: 'bot' })}. `
+        + 'На новом компьютере его придётся найти в чате руками');
+    });
+
+    // Прежний убираем — иначе чат зарастает копиями одного и того же списка.
+    // Сначала новый, потом удаление старого: упадёт отправка — старый цел
+    if (previous && previous !== result.messageId) {
+      await deleteMessage(chatId, previous).catch((err) => {
+        log.info(`Прежний список удалить не вышло: ${describeError(err, { kind: 'bot' })}`);
+      });
+    }
 
     setMeta(`sync_published_${target.bucket}`, String(result.messageId));
     setMeta(`sync_published_at_${target.bucket}`, String(Date.now()));
-    log.ok(`Список «${target.title}» выложен в чат: ${rows} ${rows === 1 ? 'запись' : 'записей'} (${humanSize(stat.size)})`);
+    log.ok(`Список «${target.title}» обновлён в чате: ${rows} ${rows === 1 ? 'запись' : 'записей'} (${humanSize(stat.size)})`);
     return { messageId: result.messageId, rows, title: target.title };
   } finally {
     await fs.rm(file, { force: true }).catch(() => {});
   }
+}
+
+/**
+ * Ищет список в чате, ничего не зная заранее. Нужно на новом компьютере:
+ * базы там ещё нет, номера сообщения — тоже. Смотрим закреплённое: список
+ * закрепляется при каждой выкладке именно ради этого.
+ */
+export async function findSnapshotInChat(id) {
+  const target = targetOf(id);
+  if (!botConfigured()) return null;
+
+  try {
+    const chat = await getChat(target.chat());
+    const pinned = chat.pinned_message;
+    const name = pinned?.document?.file_name ?? '';
+    if (name === SNAPSHOT_FILE(target.bucket)) return pinned.message_id;
+
+    // Закрепить могли не дать — тогда пробуем то, что помним
+    return Number(getMeta(`sync_published_${target.bucket}`) ?? 0) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Подтягивает всё, что лежит в чатах, в пустую базу. Это и есть «поставил
+ * программу на новый компьютер — и всё на месте»: файлы никуда не девались,
+ * они в Telegram, а список к ним лежит там же закреплённым сообщением.
+ */
+export async function restoreFromChats() {
+  const done = [];
+  for (const target of syncTargets()) {
+    try {
+      const r = await pullSnapshot(target.id);
+      done.push({ ...target, added: r.added, total: r.total });
+    } catch (err) {
+      done.push({ ...target, problem: describeError(err) });
+    }
+  }
+  return done;
 }
 
 /** Что известно про выложенный список — для панели. */
@@ -134,8 +199,15 @@ export function syncState(id) {
  */
 export async function pullSnapshot(id, messageId) {
   const target = targetOf(id);
-  const msgId = Number(messageId) || Number(getMeta(`sync_published_${target.bucket}`) ?? 0);
-  if (!msgId) throw new Error('Не знаю, где список: сначала выложите его или укажите сообщение');
+  // Номер могли передать, могли помнить, а на новом компьютере не будет
+  // ни того, ни другого — тогда спрашиваем у чата, что в нём закреплено
+  const msgId = Number(messageId)
+    || Number(getMeta(`sync_published_${target.bucket}`) ?? 0)
+    || (await findSnapshotInChat(id));
+  if (!msgId) {
+    throw new Error('В чате нет списка: его ещё ни разу не выкладывали. '
+      + 'Нажмите «Синхронизировать» на том компьютере, где файлы уже собраны');
+  }
   if (!mtprotoConfigured()) throw new Error('Чтобы забрать список, нужен вход в аккаунт: бот отдаёт только файлы до 20 МБ');
 
   const dest = path.join(config.tmpDir || '.', `pull-${target.bucket}.json`);

@@ -239,6 +239,15 @@ export async function deleteForumTopic(topicId, chatId = config.chatId) {
   return true;
 }
 
+/**
+ * Закрепляет сообщение. Закреплённое видно всем и находится без всякой
+ * базы — на этом и держится подхват общего списка на новом компьютере:
+ * программа спрашивает у чата, что в нём закреплено.
+ */
+export async function pinChatMessage(chatId, messageId, { silent = true } = {}) {
+  return call('pinChatMessage', { chat_id: chatId, message_id: messageId, disable_notification: silent });
+}
+
 /** Меняет подпись у уже отправленного файла — так живут заметки к файлам. */
 export async function editMessageCaption(chatId, messageId, caption, extra = {}) {
   return call('editMessageCaption', {

@@ -205,6 +205,48 @@ export async function copyMessageToPerson({ to, fromChatId = config.chatId, mess
   return { messageId: sent?.[0]?.id ?? null };
 }
 
+/**
+ * Ваши контакты в Telegram. Нужны, чтобы не заставлять человека вспоминать
+ * и набирать @имя: почти всегда тот, кому шлют файл, уже в контактах.
+ */
+export async function myContacts(limit = 200) {
+  const { Api } = loadGramJs();
+  const c = await getClient();
+  const res = await c.invoke(new Api.contacts.GetContacts({ hash: 0 }));
+
+  return (res.users ?? [])
+    .filter((u) => !u.bot && !u.deleted && !u.self)
+    .slice(0, limit)
+    .map((u) => ({
+      id: String(u.id),
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || String(u.id),
+      username: u.username ?? null,
+    }));
+}
+
+/**
+ * Поиск по Telegram: сначала среди своих, потом по всей сети.
+ * Нужен, когда человека в контактах нет, а @имя целиком вспоминать лень.
+ */
+export async function searchPeople(query, limit = 20) {
+  const { Api } = loadGramJs();
+  const c = await getClient();
+  const q = String(query ?? '').trim().replace(/^@/, '');
+  if (q.length < 2) return [];
+
+  const res = await c.invoke(new Api.contacts.Search({ q, limit }));
+  const users = [...(res.users ?? [])];
+
+  return users
+    .filter((u) => !u.bot && !u.deleted && !u.self)
+    .map((u) => ({
+      id: String(u.id),
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || String(u.id),
+      username: u.username ?? null,
+      contact: Boolean(u.contact),
+    }));
+}
+
 /** Удаляет сообщение от имени аккаунта. */
 export async function deleteMessageViaAccount({ chatId = config.chatId, messageId }) {
   const c = await getClient();
@@ -292,14 +334,23 @@ export async function createStorageGroup({ title, about = 'Архив фото �
       new Api.channels.EditAdmin({
         channel,
         userId: bot,
+        // Выдаём сразу всё, что бот вообще может уметь: иначе человеку
+        // потом приходится догадываться, какого права не хватило, и лезть
+        // в настройки чата. Права только у бота — людей это не касается
         adminRights: new Api.ChatAdminRights({
           changeInfo: true,
           postMessages: true,
           editMessages: true,
           deleteMessages: true,
+          banUsers: true,
           inviteUsers: true,
           pinMessages: true,
           manageTopics: true,
+          manageCall: true,
+          // Своих админов бот назначать не должен — это не нужно и опасно
+          addAdmins: false,
+          anonymous: false,
+          other: true,
         }),
         rank: 'архивариус',
       }),

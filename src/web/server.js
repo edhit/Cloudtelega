@@ -10,7 +10,8 @@ import { describeError } from '../errors.js';
 import { envExists, envPath, updateEnv } from '../env.js';
 import {
   closeDb, countFiles, fileIdCoverage, listAllFolders, listFiles, listGuests, listSeenChats,
-  listSeenPeople, listTopics, putSeenChat, searchFiles, sqliteDriver, stats,
+  listSeenPeople, listShareTargets, listTopics, noteShareTarget, putSeenChat, searchFiles,
+  sqliteDriver, stats,
 } from '../db.js';
 import { messageLink } from '../links.js';
 import { connectGuides, detectPhones, inspectMount, listMountPoints } from '../devices.js';
@@ -20,21 +21,23 @@ import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline
 import { summarizeUnreadable } from '../scanner.js';
 import {
   createFolder, driveOverview, folders as driveFolders, getFileBack, moveFile,
-  putMany, putUploaded, removeFolder, removeFromDrive, setNote, shareFile,
+  putMany, putUploaded, removeFolder, removeFromDrive, setNote, shareFile, shareFolder,
 } from '../drive.js';
 import {
   accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
   removeGuest, revokeAccessLink,
 } from '../sharing.js';
 import { cleanupStrayLiveVideos, describeStray } from '../cleanup.js';
-import { publishSnapshot, pullSnapshot, syncState, syncTargets } from '../sync.js';
+import {
+  publishSnapshot, pullSnapshot, restoreFromChats, syncState, syncTargets,
+} from '../sync.js';
 import {
   botConfigured, fileUrl, getChat, getChatMember, getFilePath, getMe, getUpdates, sendMessageWithToken,
 } from '../telegram/botApi.js';
 import {
   accountInfo, cancelWebLogin, createStorageGroup, disconnect as disconnectAccount,
-  downloadMyAvatar, downloadUserPhoto, listGroupMembers, mtprotoConfigured, startWebLogin,
-  submitWebLogin, webLoginState, whoAmI,
+  downloadMyAvatar, downloadUserPhoto, listGroupMembers, mtprotoConfigured, myContacts,
+  searchPeople, startWebLogin, submitWebLogin, webLoginState, whoAmI,
 } from '../telegram/mtproto.js';
 import { botRunning, botState, runBot, seenChats, seenPeople, stopBot } from '../bot.js';
 import { createProfile, deleteProfile, listProfiles, readProfileEnv, setActiveProfile } from '../profiles.js';
@@ -1017,18 +1020,47 @@ const routes = {
     return { ...r, ...syncState(String(body?.storage ?? 'drive')) };
   },
 
+  // Новый компьютер: базы нет, но всё лежит в чатах — подтягиваем оттуда
+  'POST /api/sync/restore': async () => ({ storages: await restoreFromChats() }),
+
   'POST /api/sync/pull': async (body) => {
     const id = String(body?.storage ?? 'drive');
     const r = await pullSnapshot(id, body?.messageId);
     return { ...r, ...syncState(id) };
   },
 
-  // Кому можно отдать файл: бот пишет только тем, кто ему писал сам
+  /**
+   * Кому можно отдать файл. Сверху — те, кому шлют чаще всего, потом
+   * контакты Telegram, потом те, кто писал боту. Смысл один: чтобы человеку
+   * почти никогда не приходилось ничего набирать.
+   */
   'POST /api/drive/people': async () => {
     const known = new Map();
-    for (const p of listSeenPeople()) known.set(p.id, { ...p, wroteBot: true });
-    for (const p of seenPeople()) known.set(String(p.id), { ...p, id: String(p.id), wroteBot: true });
+    const add = (person, extra) => {
+      const id = String(person.id);
+      known.set(id, { ...known.get(id), ...person, id, ...extra });
+    };
+
+    for (const p of listShareTargets()) add(p, { often: true });
+    for (const p of listSeenPeople()) add(p, { wroteBot: true });
+    for (const p of seenPeople()) add(p, { wroteBot: true });
+
+    // Контакты знает только аккаунт — бот их не видит вовсе
+    if (config.session) {
+      try {
+        for (const p of await myContacts()) add(p, { contact: true });
+      } catch (err) {
+        log.info(`Контакты не получены: ${describeError(err, { kind: 'mtproto' })}`);
+      }
+    }
+
     return { people: [...known.values()], account: Boolean(config.session) };
+  },
+
+  // Поиск по Telegram — когда человека нет ни в частых, ни в контактах
+  'POST /api/drive/people/search': async (body) => {
+    if (!config.session) throw new Error('Поиск по Telegram работает через ваш аккаунт — войдите в него');
+    return { people: await searchPeople(String(body?.query ?? '')) };
   },
 
   'POST /api/drive/share': async (body) => {
@@ -1036,6 +1068,30 @@ const routes = {
       userId: body?.userId ? String(body.userId) : undefined,
       username: body?.username ? String(body.username).trim() : undefined,
     });
+    // Запоминаем адресата: в следующий раз он будет сверху списка
+    if (body?.userId || body?.username) {
+      noteShareTarget({
+        id: body?.userId ?? body?.username,
+        name: body?.name ?? body?.username ?? 'Кому-то',
+        username: body?.username ?? null,
+      });
+    }
+    return r;
+  },
+
+  // Папку отдают тем же способом: копией каждого файла, что внутри
+  'POST /api/drive/share-folder': async (body) => {
+    const r = await shareFolder(String(body?.path ?? ''), {
+      userId: body?.userId ? String(body.userId) : undefined,
+      username: body?.username ? String(body.username).trim() : undefined,
+    });
+    if (body?.userId || body?.username) {
+      noteShareTarget({
+        id: body?.userId ?? body?.username,
+        name: body?.name ?? body?.username ?? 'Кому-то',
+        username: body?.username ?? null,
+      });
+    }
     return r;
   },
 

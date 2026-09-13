@@ -17,7 +17,7 @@ import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import {
   driveRootCount, driveStats, dropFolder, fileById, findByHash, listDriveFolders,
-  markFailed, markSent, putTopic, setFileFolder, setFileNote, upsertPending,
+  markFailed, markSent, putTopic, searchFiles, setFileFolder, setFileNote, upsertPending,
 } from './db.js';
 import { sha256Cached } from './hash.js';
 import { extOf, kindOf, mimeOf } from './media.js';
@@ -528,6 +528,36 @@ export async function shareFile(id, { userId, username } = {}) {
   await copyMessageToPerson({ to: target, fromChatId: from, messageId: row.message_id });
   log.ok(`Файл «${row.name}» отправлен ${target} от вашего имени`);
   return { sent: 'account', name: row.name };
+}
+
+/**
+ * Отдаёт человеку целую папку — копией каждого файла, что в ней лежит,
+ * включая вложенные.
+ *
+ * Дать «доступ к папке» в Telegram нельзя: доступ там к чату целиком,
+ * а папка — это тема внутри него, и отдельных прав у темы не бывает.
+ * Поэтому папку не открывают, а пересылают содержимым.
+ */
+export async function shareFolder(rawPath, to = {}) {
+  const path = cleanFolderPath(rawPath);
+  const rows = searchFiles({ bucket: BUCKET, folder: path, limit: 500 }).rows
+    .filter((r) => r.status === 'sent' && r.message_id);
+
+  if (!rows.length) throw new Error(`В папке «${path}» нечего отправлять`);
+
+  let sent = 0;
+  const failed = [];
+  for (const row of rows) {
+    try {
+      await shareFile(row.id, to);
+      sent += 1;
+    } catch (err) {
+      failed.push({ name: row.name, error: err.message });
+    }
+  }
+
+  log.ok(`Папка «${path}»: отправлено файлов ${sent} из ${rows.length}`);
+  return { path, sent, total: rows.length, failed };
 }
 
 /** Убирает файл с диска: удаляет сообщение и запись. */

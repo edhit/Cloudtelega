@@ -69,16 +69,6 @@
         </button>
       </li>
       <li>
-        <button data-pane="setup">
-          <!-- шестерёнка: настройка -->
-          <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
-            <circle cx="11" cy="11" r="2.8"/>
-            <path d="M11 2.6v2.2M11 17.2v2.2M3.9 7l1.9 1.1M16.2 13.9l1.9 1.1M3.9 15l1.9-1.1M16.2 8.1l1.9-1.1"/>
-          </svg>
-          <span class="nav-label">Настройка</span>
-        </button>
-      </li>
-      <li>
         <button class="nav-lock" id="lockNow">
           <!-- закрытый замок -->
           <svg class="nav-icon" viewBox="0 0 22 22" aria-hidden="true">
@@ -611,6 +601,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/><path d="M11 11.4v4.2M8.9 13.5h4.2"/></svg>
           <span>Новая папка</span>
         </button>
+        <button class="btn btn-icon" id="driveSync" title="Обновить общий список в чате">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.6L4 15.4"/><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.6"/><path d="M4 20v-4.6h4.6M20 4v4.6h-4.6"/></svg>
+          <span>Синхронизировать</span>
+        </button>
         <button class="btn btn-primary btn-icon" id="drivePickFiles">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.2V5.4"/><path d="m7.8 9.6 4.2-4.2 4.2 4.2"/><path d="M5 15.4v2.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.2"/></svg>
           <span>Загрузить</span>
@@ -637,18 +631,16 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>
           </button>
         </label>
-        <button class="btn btn-icon sort-btn" id="driveSort" title="Как сортировать">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5.4v13.2"/><path d="m4 8.4 3-3 3 3"/><path d="M13.4 7h7"/><path d="M13.4 12h5"/><path d="M13.4 17h3"/></svg>
-          <span id="driveSortText">Сначала новые</span>
-        </button>
-        <div class="seg seg-icons" id="segDriveView">
-          <label title="Плиткой"><input type="radio" name="driveview" value="grid" checked><span>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.6"/><rect x="11" y="3" width="6" height="6" rx="1.6"/><rect x="3" y="11" width="6" height="6" rx="1.6"/><rect x="11" y="11" width="6" height="6" rx="1.6"/></svg>
-          </span></label>
-          <label title="Списком"><input type="radio" name="driveview" value="list"><span>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5.5h10M7 10h10M7 14.5h10"/><circle cx="3.6" cy="5.5" r="1"/><circle cx="3.6" cy="10" r="1"/><circle cx="3.6" cy="14.5" r="1"/></svg>
-          </span></label>
-        </div>
+      </div>
+
+      <!-- Шапка колонок: сортировка там же, где в любом файловом менеджере —
+           щелчок по названию колонки, повторный меняет направление -->
+      <div class="cols" id="driveCols">
+        <span class="col-icon"></span>
+        <button class="col" data-sort="name">Имя</button>
+        <button class="col col-size" data-sort="size">Размер</button>
+        <button class="col col-date" data-sort="date">Загружен</button>
+        <span class="col-menu"></span>
       </div>
 
       <div class="dropzone" id="driveDrop">
@@ -710,10 +702,23 @@
         </div>
       </div>
 
+      <div class="group-title">Новый компьютер</div>
+      <div class="group">
+        <div class="row">
+          <div class="row-label">
+            <b>Подтянуть всё из Telegram</b>
+            <small>Поставили программу заново — файлы никуда не делись. Список лежит в чате
+              закреплённым сообщением, программа найдёт его сама</small>
+          </div>
+          <button class="btn" id="syncRestore">Подтянуть</button>
+        </div>
+      </div>
+
       <div class="note blue">
         <b>Что уходит в чат.</b> Только имена файлов, размеры и номера сообщений — то, что и так
         видно в чате. Пути на вашем компьютере в список не попадают: их незачем знать тем,
-        кого вы пустили.
+        кого вы пустили. Прежний список программа заменяет новым, а не копит — в чате всегда
+        одно закреплённое сообщение.
       </div>
     </section>
 

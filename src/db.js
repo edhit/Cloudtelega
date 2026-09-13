@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS seen_people (
   seen_at  INTEGER NOT NULL
 );
 
+-- Кому чаще всего пересылают файлы. Держим десяток: список нужен, чтобы
+-- в окне «кому отправить» сверху были те же несколько человек, а не поиск
+-- по всему Telegram каждый раз.
+CREATE TABLE IF NOT EXISTS share_targets (
+  id       TEXT PRIMARY KEY,
+  name     TEXT,
+  username TEXT,
+  times    INTEGER NOT NULL DEFAULT 0,
+  last_at  INTEGER NOT NULL
+);
+
 -- Топики форум-супергруппы: год -> message_thread_id
 CREATE TABLE IF NOT EXISTS topics (
   chat_id  TEXT    NOT NULL,
@@ -574,6 +585,29 @@ export function listSeenPeople() {
     .prepare('SELECT id, name, username FROM seen_people ORDER BY seen_at DESC')
     .all()
     .map((r) => ({ id: r.id, name: r.name || r.id, username: r.username }));
+}
+
+/** Запоминает, кому отправили файл, и считает, сколько раз. */
+export function noteShareTarget({ id, name, username }) {
+  if (!id) return;
+  openDb()
+    .prepare(
+      `INSERT INTO share_targets (id, name, username, times, last_at) VALUES (?, ?, ?, 1, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = COALESCE(excluded.name, share_targets.name),
+         username = COALESCE(excluded.username, share_targets.username),
+         times = share_targets.times + 1,
+         last_at = excluded.last_at`,
+    )
+    .run(String(id), name ?? null, username ?? null, Date.now());
+}
+
+/** Кому шлют чаще всего — не больше десяти, иначе это уже не «частые». */
+export function listShareTargets(limit = 10) {
+  return openDb()
+    .prepare('SELECT id, name, username, times FROM share_targets ORDER BY times DESC, last_at DESC LIMIT ?')
+    .all(Math.max(1, Math.min(50, Number(limit) || 10)))
+    .map((r) => ({ id: r.id, name: r.name || r.id, username: r.username, times: r.times }));
 }
 
 export function listSeenChats() {

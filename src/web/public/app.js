@@ -462,9 +462,15 @@ const APPS = [
     tint: '#34c759',
     icon: '<rect x="3" y="5.6" width="16" height="11.4" rx="2.4"/><circle cx="11" cy="11.3" r="3"/><path d="M7.4 5.6l1-1.8h5.2l1 1.8"/>',
     chat: () => state?.settings.chatId,
+    // Настройка — про фотоархив и есть: куда складывать снимки, что с диска
+    // брать, как отправлять. Отдельным разделом она стояла особняком,
+    // хотя относится ровно к этому хранилищу
     tabs: [
       { pane: 'archive', label: 'Снимки' },
-      { pane: 'finish', label: 'Загрузить с телефона или диска' },
+      { pane: 'finish', label: 'Загрузить' },
+      { pane: 'chat', label: 'Куда складывать' },
+      { pane: 'folders', label: 'Что отправлять' },
+      { pane: 'prefs', label: 'Как отправлять' },
       { pane: 'access', label: 'Кто имеет доступ' },
       { pane: 'sync', label: 'Общий список' },
     ],
@@ -477,26 +483,7 @@ const APPS = [
 
 // Какая панель какому хранилищу принадлежит. Панель доступа общая: она
 // показывает то хранилище, которое сейчас открыто.
-/**
- * Настройка — такой же раздел с вкладками, как хранилище, только без чата.
- * Раньше её шаги были пронумерованным списком в боковом меню: пока
- * настраиваешь — уместно, а потом занимает полменю и напоминает,
- * что программу когда-то «проходили по шагам».
- */
-const SETTINGS_SECTION = {
-  id: 'setup',
-  title: 'Настройка',
-  tint: '#8e8e93',
-  icon: '<circle cx="11" cy="11" r="2.8"/><path d="M11 2.6v2.2M11 17.2v2.2M3.9 7l1.9 1.1M16.2 13.9l1.9 1.1M3.9 15l1.9-1.1M16.2 8.1l1.9-1.1"/>',
-  tabs: [
-    { pane: 'start', label: 'С чего начать' },
-    { pane: 'chat', label: 'Куда складывать' },
-    { pane: 'folders', label: 'Что отправлять' },
-    { pane: 'prefs', label: 'Как отправлять' },
-  ],
-};
-
-const SECTIONS = [...APPS, SETTINGS_SECTION];
+const SECTIONS = APPS;
 
 const SHARED_PANES = new Set(['access', 'sync']);
 const PANE_OWNER = new Map();
@@ -2066,7 +2053,7 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
 /* ── диск: настоящий файловый менеджер ───────────────────────────────────── */
 
 // Где мы сейчас: '' — корень, иначе имя папки
-const drive = { folder: '', query: '', offset: 0, total: 0, view: 'grid', data: null, sort: 'date', dir: 'desc' };
+const drive = { folder: '', query: '', offset: 0, total: 0, data: null, sort: 'date', dir: 'desc' };
 
 // Порядок в списке. Название говорит, что получится, а не как это устроено:
 // «сначала новые» понятнее, чем «по дате, по убыванию»
@@ -2195,6 +2182,7 @@ async function loadDrive({ append = false } = {}) {
   $('#driveFolders').checked = data.folders;
 
   renderCrumbs();
+  renderCols();
   renderDriveBody(data, append);
 
   drive.offset += data.rows.length;
@@ -2268,12 +2256,18 @@ function renderDriveBody(data, append) {
   if (!append) box.innerHTML = '';
 
   const list = document.createElement('div');
-  list.className = drive.view === 'grid' ? 'files' : 'files-list';
+  list.className = 'files-list';
 
-  // Подпапки идут первыми на любом уровне — иначе вложенная папка была бы
-  // создана, но не видна. При поиске папок нет: ищем по файлам всего диска
+  // Подпапки идут первыми на любом уровне — как в любом файловом менеджере.
+  // Порядок внутри них слушается той же колонки: по имени — по имени,
+  // по размеру — по числу файлов. Даты у папки нет, тогда остаётся имя
   if (!append && !drive.query) {
-    for (const folder of data.list ?? []) list.append(folderCard(folder));
+    const folders = [...(data.list ?? [])];
+    const sign = drive.dir === 'asc' ? 1 : -1;
+    folders.sort((a, b) => (drive.sort === 'size'
+      ? sign * ((a.bytes ?? 0) - (b.bytes ?? 0))
+      : (drive.sort === 'name' ? sign : 1) * a.name.localeCompare(b.name, 'ru')));
+    for (const folder of folders) list.append(folderCard(folder));
   }
 
   for (const row of data.rows) list.append(fileCard(row));
@@ -2288,7 +2282,7 @@ function renderDriveBody(data, append) {
     return;
   }
 
-  if (append && box.lastElementChild?.classList.contains(drive.view === 'grid' ? 'files' : 'files-list')) {
+  if (append && box.lastElementChild?.classList.contains('files-list')) {
     box.lastElementChild.append(...list.children);
   } else {
     box.append(list);
@@ -2297,7 +2291,7 @@ function renderDriveBody(data, append) {
 
 function folderCard(folder) {
   const card = document.createElement('div');
-  card.className = drive.view === 'grid' ? 'file-card folder' : 'file-row folder';
+  card.className = 'file-row folder';
   card.title = folder.name;
 
   const name = document.createElement('span');
@@ -2310,9 +2304,13 @@ function folderCard(folder) {
   if (folder.folders) parts.push(`${folder.folders} ${plural(folder.folders, 'папка', 'папки', 'папок')}`);
   if (folder.n) parts.push(`${folder.n} ${plural(folder.n, 'файл', 'файла', 'файлов')} · ${humanSize(folder.bytes)}`);
 
-  const sub = document.createElement('span');
-  sub.className = 'file-sub';
-  sub.textContent = parts.join(' · ') || 'пусто';
+  const size = document.createElement('span');
+  size.className = 'file-sub col-size';
+  size.textContent = parts.join(' · ') || 'пусто';
+
+  const when = document.createElement('span');
+  when.className = 'file-sub col-date';
+  when.textContent = '';
 
   // Папку тоже надо уметь убрать — раньше её можно было только завести
   const menu = document.createElement('button');
@@ -2324,7 +2322,7 @@ function folderCard(folder) {
     folderActions(folder, e);
   });
 
-  card.append(fileGlyph(folder.name, { folder: true }), name, sub, menu);
+  card.append(fileGlyph(folder.name, { folder: true }), name, size, when, menu);
   card.addEventListener('click', () => guard(null, () => openFolder(folder.path)));
   card.addEventListener('contextmenu', (e) => folderActions(folder, e));
 
@@ -2353,6 +2351,15 @@ function folderActions(folder, event) {
     title: folder.name,
     items: [
       { label: 'Открыть', art: CTX_ART.folder, run: () => openFolder(folder.path) },
+      {
+        label: 'Отправить человеку…',
+        art: CTX_ART.share,
+        run: () => pickPersonAndSend({
+          title: `Кому отправить папку «${folder.name}»`,
+          send: (to) => api('/api/drive/share-folder', { path: folder.path, ...to }),
+          done: (who) => `Папка «${folder.name}» отправлена: ${who}`,
+        }),
+      },
       'sep',
       { label: 'Удалить папку', art: CTX_ART.trash, danger: true, run: () => removeFolderAsked(folder) },
     ],
@@ -2385,7 +2392,7 @@ async function removeFolderAsked(folder) {
 
 function fileCard(r) {
   const card = document.createElement('div');
-  card.className = drive.view === 'grid' ? 'file-card' : 'file-row';
+  card.className = 'file-row';
   card.title = `${r.name}${r.folder ? ` · папка ${r.folder}` : ''}`;
 
   const icon = fileGlyph(r.name, { kind: r.file_type ?? r.kind });
@@ -2395,16 +2402,24 @@ function fileCard(r) {
   name.className = 'file-name';
   name.textContent = r.name;
 
-  const sub = document.createElement('span');
-  sub.className = 'file-sub';
-  if (r.status !== 'sent') {
-    sub.textContent = r.last_error ? 'не ушёл' : 'в очереди';
-  } else {
-    // Дату загрузки видно сразу: без неё непонятно, что тут новое,
-    // а что лежит с прошлого года
-    const parts = [humanSize(r.size), whenAdded(r)];
-    if (drive.query && r.folder) parts.push(r.folder.split('/').join(' / '));
-    sub.textContent = parts.filter(Boolean).join(' · ');
+  // Размер и дата — отдельными колонками, под шапкой, по которой сортируют
+  const size = document.createElement('span');
+  size.className = 'file-sub col-size';
+  size.textContent = r.status === 'sent' ? humanSize(r.size) : '';
+
+  const when = document.createElement('span');
+  when.className = 'file-sub col-date';
+  when.textContent = r.status === 'sent'
+    ? whenAdded(r)
+    : (r.last_error ? 'не ушёл' : 'в очереди');
+
+  // При поиске папка важнее даты: иначе непонятно, откуда файл
+  if (drive.query && r.folder) {
+    name.title = `${r.folder.split('/').join(' / ')} / ${r.name}`;
+    const where = document.createElement('small');
+    where.className = 'file-where';
+    where.textContent = r.folder.split('/').join(' / ');
+    name.append(where);
   }
 
   const menu = document.createElement('button');
@@ -2416,7 +2431,7 @@ function fileCard(r) {
     fileActions(r, e);
   });
 
-  card.append(icon, name, sub, menu);
+  card.append(icon, name, size, when, menu);
 
   // Щелчок открывает само сообщение в Telegram, правая кнопка — меню действий
   card.addEventListener('click', () => {
@@ -2568,6 +2583,92 @@ function treeRow(folder, all, skip, redraw) {
   return row;
 }
 
+/* ── кому отправить ──────────────────────────────────────────────────────── */
+
+/**
+ * Выбор человека: сверху те, кому шлют чаще всего, ниже контакты Telegram,
+ * и тут же поиск по всему Telegram. Смысл — чтобы почти никогда не
+ * приходилось ничего набирать: обычно файл уходит одним и тем же людям.
+ */
+async function pickPersonAndSend({ title, send, done }) {
+  const { people, account } = await api('/api/drive/people', {});
+
+  const asItem = (p) => ({
+    id: p.id,
+    label: p.name,
+    sub: [
+      p.often ? `отправляли ${p.times} ${plural(p.times, 'раз', 'раза', 'раз')}` : null,
+      p.username ? `@${p.username}` : null,
+      p.contact ? 'контакт' : p.wroteBot ? 'писал боту' : null,
+    ].filter(Boolean).join(' · '),
+    username: p.username,
+    name: p.name,
+    photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
+  });
+
+  // Частые — наверх, отдельной группой: за ними человек и пришёл
+  const often = people.filter((p) => p.often).map(asItem);
+  const rest = people.filter((p) => !p.often).map(asItem);
+
+  const picked = await pickFromList({
+    title,
+    text: 'Человек получит только это — копией в личные сообщения. Ни чата, ни остальных файлов он не увидит.',
+    items: [
+      ...often,
+      ...rest,
+      {
+        id: '__search__',
+        label: 'Найти в Telegram',
+        sub: account ? 'По имени или @имени' : 'Нужен вход в аккаунт',
+        art: '<circle cx="9.6" cy="9.6" r="5.4"/><path d="m13.8 13.8 4 4"/>',
+        tint: '#8e8e93',
+      },
+    ],
+    empty: 'Пока некому: войдите в аккаунт, чтобы увидеть контакты, или попросите человека написать боту.',
+  });
+  if (!picked) return;
+
+  let target = picked;
+  if (picked.id === '__search__') {
+    target = await searchPerson();
+    if (!target) return;
+  }
+
+  await send({ userId: target.id, username: target.username, name: target.name ?? target.label });
+  toast(done(target.name ?? target.label));
+}
+
+/** Поиск по Telegram — когда человека нет ни в частых, ни в контактах. */
+async function searchPerson() {
+  const query = await askText({
+    title: 'Найти в Telegram',
+    text: 'Имя или @имя. Ищу среди ваших контактов и по всему Telegram.',
+    placeholder: 'Маша или @masha',
+    okText: 'Искать',
+  });
+  if (!query) return null;
+
+  const { people } = await api('/api/drive/people/search', { query });
+  if (!people.length) {
+    toast(`По запросу «${query}» никого не нашлось`, true);
+    return null;
+  }
+
+  return pickFromList({
+    title: `Нашлось: ${people.length}`,
+    text: 'Выберите, кому отправить.',
+    items: people.map((p) => ({
+      id: p.id,
+      label: p.name,
+      sub: [p.username ? `@${p.username}` : null, p.contact ? 'ваш контакт' : null].filter(Boolean).join(' · '),
+      username: p.username,
+      name: p.name,
+      photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
+    })),
+    empty: '',
+  });
+}
+
 /* ── действия над файлом ─────────────────────────────────────────────────── */
 
 const fileOps = {
@@ -2603,49 +2704,11 @@ const fileOps = {
    * доступ там даётся к чату целиком. Поэтому файл не «открывают», а посылают
    * копией в личную переписку — человек получает ровно его и больше ничего.
    */
-  share: async (r) => {
-    const { people, account } = await api('/api/drive/people', {});
-
-    const picked = await pickFromList({
-      title: `Кому отправить «${r.name}»`,
-      text: 'Человек получит только этот файл — копией в личные сообщения. Ни чата, ни остальных файлов он не увидит.',
-      items: [
-        ...people.map((p) => ({
-          id: p.id,
-          label: p.name,
-          sub: p.username ? `@${p.username} · писал боту` : 'писал боту',
-          // Именно поле, а не подпись: в подписи ещё и пояснение
-          username: p.username,
-          photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
-        })),
-        {
-          id: '__byname__',
-          label: 'Указать @имя',
-          sub: account ? 'Отправлю от вашего имени' : 'Нужен вход в аккаунт',
-          art: '<circle cx="11" cy="7.6" r="3.2"/><path d="M4.6 18.4a6.4 6.4 0 0 1 12.8 0"/>',
-          tint: '#8e8e93',
-        },
-      ],
-      empty: 'Пока некому: бот может писать только тем, кто сам ему написал.',
-    });
-    if (!picked) return;
-
-    if (picked.id !== '__byname__') {
-      const r2 = await api('/api/drive/share', { id: r.id, userId: picked.id, username: picked.username });
-      toast(`«${r2.name}» отправлен: ${picked.label}`);
-      return;
-    }
-
-    const who = await askText({
-      title: 'Кому отправить',
-      text: 'Напишите @имя в Telegram. Программа отправит файл от вашего имени — копией, так что название чата человек не увидит.',
-      placeholder: '@masha',
-      okText: 'Отправить',
-    });
-    if (!who) return;
-    const r2 = await api('/api/drive/share', { id: r.id, username: who });
-    toast(`«${r2.name}» отправлен ${who}`);
-  },
+  share: (r) => pickPersonAndSend({
+    title: `Кому отправить «${r.name}»`,
+    send: (to) => api('/api/drive/share', { id: r.id, ...to }),
+    done: (who) => `«${r.name}» отправлен: ${who}`,
+  }),
 
   move: async (r) => {
     const target = await pickFolderTree({
@@ -2744,20 +2807,29 @@ dropZone().addEventListener('drop', (e) => {
   if (files.length) guard(null, () => uploadFiles(files));
 });
 
-// Порядок выбирают из того же меню, что и всё остальное в программе
-$('#driveSort').addEventListener('click', (e) => openContextMenu(e, {
-  title: 'Как сортировать',
-  items: SORTS.map((option) => ({
-    label: option.sort === drive.sort && option.dir === drive.dir ? `✓ ${option.label}` : option.label,
-    art: CTX_ART.sort,
-    run: async () => {
-      drive.sort = option.sort;
-      drive.dir = option.dir;
-      $('#driveSortText').textContent = option.label;
-      await loadDrive();
-    },
-  })),
-}));
+/**
+ * Шапка колонок: щелчок сортирует по ней, повторный переворачивает порядок.
+ * Так это устроено в любом файловом менеджере, и объяснять ничего не надо.
+ */
+function renderCols() {
+  for (const btn of $$('#driveCols .col')) {
+    const mine = btn.dataset.sort === drive.sort;
+    btn.classList.toggle('active', mine);
+    btn.dataset.dir = mine ? drive.dir : '';
+    btn.setAttribute('aria-sort', mine ? (drive.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+  }
+}
+
+$$('#driveCols .col').forEach((btn) => btn.addEventListener('click', () => guard(null, async () => {
+  const by = btn.dataset.sort;
+  // Та же колонка — переворачиваем; новая — начинаем с привычного порядка:
+  // имя от А, размер и дата — от большего и от свежего
+  if (drive.sort === by) drive.dir = drive.dir === 'asc' ? 'desc' : 'asc';
+  else drive.dir = by === 'name' ? 'asc' : 'desc';
+  drive.sort = by;
+  renderCols();
+  await loadDrive();
+})));
 
 $('#drivePickFiles').addEventListener('click', () => $('#driveFileInput').click());
 $('#driveFileInput').addEventListener('change', () => {
@@ -2991,10 +3063,6 @@ $('#driveSearch').addEventListener('keydown', (e) => {
   }
 });
 
-$$('#segDriveView input').forEach((i) => i.addEventListener('change', () => guard(null, async () => {
-  drive.view = i.value;
-  await loadDrive();
-})));
 
 $('#driveMore').addEventListener('click', (e) => guard(e.target, () => loadDrive({ append: true })));
 
@@ -3212,6 +3280,24 @@ async function loadSync() {
     ? 'Прежний список останется в чате — программа читает самый свежий'
     : 'Свежий список уедет в чат хранилища отдельным сообщением';
 }
+
+// Синхронизировать можно прямо с файлов — не уходя на отдельную вкладку
+$('#driveSync').addEventListener('click', (e) => guard(e.target.closest('button'), async () => {
+  const r = await api('/api/sync/publish', { storage: 'drive' });
+  toast(`Список обновлён: ${r.rows} ${plural(r.rows, 'запись', 'записи', 'записей')}`);
+}));
+
+$('#syncRestore').addEventListener('click', (e) => guard(e.target, async () => {
+  const { storages } = await api('/api/sync/restore', {});
+  const good = storages.filter((x) => !x.problem);
+  const added = good.reduce((n, x) => n + (x.added ?? 0), 0);
+  for (const bad of storages.filter((x) => x.problem)) toast(`${bad.title}: ${bad.problem}`, true);
+  if (good.length) {
+    await loadDrive().catch(() => {});
+    await loadSync();
+    toast(added ? `Подтянуто записей: ${added}` : 'Всё уже на месте — нового не нашлось');
+  }
+}));
 
 $('#syncPublish').addEventListener('click', (e) => guard(e.target, async () => {
   const r = await api('/api/sync/publish', { storage: syncStorageId() });
