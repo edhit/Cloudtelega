@@ -390,13 +390,63 @@ const humanSize = (bytes) => {
 
 /* ── навигация ───────────────────────────────────────────────────────────── */
 
+// Что подгрузить, открывая страницу
+const PANE_LOAD = {
+  archive: () => loadArchive(),
+  home: () => loadHome(),
+  drive: () => loadDrive(),
+  access: () => loadAccess(),
+  sync: () => loadSync(),
+  profile: () => loadProfile(),
+  folders: () => loadDevices(),
+  finish: () => runChecks(),
+  chat: () => updateCreateAvailability(),
+  prefs: () => renderPreview(),
+};
+
+/**
+ * Кнопки «Дальше» остались от пошаговой настройки. Теперь шаг — это вкладка,
+ * поэтому «дальше» имеет смысл ровно один раз и ровно внизу страницы: посреди
+ * неё такая кнопка звала бы туда, что и так на виду, или уводила с полпути.
+ * Оставшуюся подписываем именем вкладки — человек должен видеть, куда идёт.
+ */
+function stepLinks(panes) {
+  const last = panes[panes.length - 1];
+  for (const btn of $$('.pane .btn-row [data-go]')) {
+    const row = btn.closest('.btn-row');
+    const mine = btn.closest('.pane')?.id.replace('pane-', '');
+    row.hidden = mine !== last || panes.includes(btn.dataset.go);
+    if (row.hidden) continue;
+    const label = TAB_OF.get(btn.dataset.go)?.label;
+    if (!label) continue;
+    // Если вкладка в другом хранилище, одного её имени мало: «настройки» —
+    // это настройки чего? Называем хранилище, чтобы не гадали
+    const to = PANE_OWNER.get(btn.dataset.go);
+    const from = PANE_OWNER.get(mine);
+    const title = to && to !== from ? SECTIONS.find((sec) => sec.id === to)?.title : null;
+    btn.textContent = title ? `Дальше: ${title} · ${label} →` : `Дальше: ${label.toLowerCase()} →`;
+  }
+}
+
 function show(pane) {
   // Пункт меню может указывать на раздел, а не на страницу: у раздела своей
   // страницы нет, открываем его первую вкладку
   const section = SECTIONS.find((sec) => sec.id === pane && !document.getElementById(`pane-${pane}`));
-  if (section) return show(section.tabs[0].pane);
+  if (section) return show(section.tabs[0].panes[0]);
 
-  $$('.pane').forEach((p) => p.classList.toggle('active', p.id === `pane-${pane}`));
+  // Вкладка может показывать несколько страниц подряд: «выбрать папки»
+  // и «отправить» — один разговор, разрывать его вкладкой незачем
+  const panes = TAB_OF.get(pane)?.panes ?? [pane];
+  $$('.pane').forEach((p) => {
+    const id = p.id.replace('pane-', '');
+    const on = panes.includes(id);
+    p.classList.toggle('active', on);
+    // Идут подряд — значит, это разделы одной страницы, а не отдельные
+    // экраны: заголовок помельче, и между ними черта
+    p.classList.toggle('stacked', on && panes.length > 1);
+    p.classList.toggle('stacked-first', on && panes.length > 1 && id === panes[0]);
+  });
+  stepLinks(panes);
   renderStorageHead(pane);
 
   // В боковом меню подсвечивается хранилище, а не отдельная вкладка внутри него
@@ -404,16 +454,8 @@ function show(pane) {
   $$('#nav button, #navExtra button, #navApps button, #navHome button').forEach((b) =>
     b.setAttribute('aria-current', String(b.dataset.pane === navPane)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  if (pane === 'finish') runChecks();
-  if (pane === 'archive') loadArchive();
-  if (pane === 'home') loadHome();
-  if (pane === 'drive') loadDrive();
-  if (pane === 'access') loadAccess();
-  if (pane === 'sync') loadSync();
-  if (pane === 'profile') loadProfile();
-  if (pane === 'folders') loadDevices();
-  if (pane === 'chat') updateCreateAvailability();
-  if (pane === 'prefs') renderPreview();
+
+  for (const id of panes) PANE_LOAD[id]?.();
 }
 
 $$('#nav button[data-pane], #navExtra button[data-pane]').forEach((b) =>
@@ -448,9 +490,9 @@ const APPS = [
     // Чат хранилища: диску можно отвести свой, иначе он делит чат со снимками
     chat: () => state?.settings.driveChatId || state?.settings.chatId,
     tabs: [
-      { pane: 'drive', label: 'Файлы' },
-      { pane: 'access', label: 'Кто имеет доступ' },
-      { pane: 'sync', label: 'Общий список' },
+      { panes: ['drive'], label: 'Файлы' },
+      { panes: ['access'], label: 'Доступ' },
+      { panes: ['sync'], label: 'Настройки' },
     ],
     ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
     stat: () => (home?.drive?.files ? `${home.drive.files} файлов · ${humanSize(home.drive.bytes)}` : 'Пусто — перетащите файлы'),
@@ -462,17 +504,18 @@ const APPS = [
     tint: '#34c759',
     icon: '<rect x="3" y="5.6" width="16" height="11.4" rx="2.4"/><circle cx="11" cy="11.3" r="3"/><path d="M7.4 5.6l1-1.8h5.2l1 1.8"/>',
     chat: () => state?.settings.chatId,
-    // Настройка — про фотоархив и есть: куда складывать снимки, что с диска
-    // брать, как отправлять. Отдельным разделом она стояла особняком,
-    // хотя относится ровно к этому хранилищу
+    /*
+     * Вкладок было семь, и три из них — настройки вперемешку с содержимым.
+     * Теперь четыре, по одному вопросу на каждую: что внутри, как положить,
+     * кого пускаю, как это устроено. Страницы при этом прежние — вкладка
+     * просто показывает их подряд, потому что «выбрать папки» и «отправить» —
+     * это один разговор, а не два.
+     */
     tabs: [
-      { pane: 'archive', label: 'Снимки' },
-      { pane: 'finish', label: 'Загрузить' },
-      { pane: 'chat', label: 'Куда складывать' },
-      { pane: 'folders', label: 'Что отправлять' },
-      { pane: 'prefs', label: 'Как отправлять' },
-      { pane: 'access', label: 'Кто имеет доступ' },
-      { pane: 'sync', label: 'Общий список' },
+      { panes: ['archive'], label: 'Снимки' },
+      { panes: ['folders', 'finish'], label: 'Загрузить' },
+      { panes: ['access'], label: 'Доступ' },
+      { panes: ['chat', 'prefs', 'sync'], label: 'Настройки' },
     ],
     ready: () => Boolean(state?.settings.chatId),
     stat: () => (home?.photos?.n ? `${home.photos.n} снимков · ${humanSize(home.photos.bytes)}` : 'Пока пусто'),
@@ -486,8 +529,19 @@ const APPS = [
 const SECTIONS = APPS;
 
 const SHARED_PANES = new Set(['access', 'sync']);
+
+// По странице находим и раздел, которому она принадлежит, и вкладку,
+// которая её показывает: одна вкладка может показывать несколько страниц
 const PANE_OWNER = new Map();
-for (const app of SECTIONS) for (const tab of app.tabs) if (!SHARED_PANES.has(tab.pane)) PANE_OWNER.set(tab.pane, app.id);
+const TAB_OF = new Map();
+for (const app of SECTIONS) {
+  for (const tab of app.tabs) {
+    for (const pane of tab.panes) {
+      TAB_OF.set(pane, tab);
+      if (!SHARED_PANES.has(pane)) PANE_OWNER.set(pane, app.id);
+    }
+  }
+}
 
 let openStorage = 'drive';
 
@@ -521,11 +575,12 @@ function renderStorageHead(pane) {
 
   const tabs = $('#storageTabs');
   tabs.innerHTML = '';
+  const here = TAB_OF.get(pane);
   for (const tab of app.tabs) {
     const btn = document.createElement('button');
     btn.textContent = tab.label;
-    btn.setAttribute('aria-current', String(tab.pane === pane));
-    btn.addEventListener('click', () => show(tab.pane));
+    btn.setAttribute('aria-current', String(tab === here));
+    btn.addEventListener('click', () => show(tab.panes[0]));
     tabs.append(btn);
   }
 
@@ -1299,8 +1354,10 @@ async function loadDevices({ say = false } = {}) {
 
 /* ── как подключить телефон: своя инструкция для каждой системы ──────────── */
 
-// Какую систему и какой телефон человек смотрит сейчас
-const guideView = { platform: null, kind: 'ios' };
+// Какую систему и какой телефон человек смотрит сейчас. Свёрнута инструкция
+// или развёрнута — тоже здесь: развёрнутая занимала пол-страницы между
+// «какие папки» и «отправить», хотя нужна один раз в жизни
+const guideView = { platform: null, kind: 'ios', open: false };
 
 /**
  * Инструкцию показываем ту, что подходит этому компьютеру: систему программа
@@ -1313,8 +1370,14 @@ function renderConnectGuide(box, connect) {
   const wrap = document.createElement('div');
   wrap.className = 'guide';
 
-  const head = document.createElement('div');
+  const head = document.createElement('button');
   head.className = 'guide-head';
+  head.type = 'button';
+  head.setAttribute('aria-expanded', String(guideView.open));
+  head.addEventListener('click', () => {
+    guideView.open = !guideView.open;
+    renderConnectGuide(box, connect);
+  });
 
   const title = document.createElement('div');
   title.className = 'guide-title';
@@ -1328,6 +1391,22 @@ function renderConnectGuide(box, connect) {
       ? `Показываю для ${connect.detected} — эту систему программа нашла на вашем компьютере`
       : `Смотрите инструкцию для ${chosen}, а на этом компьютере — ${connect.detected}`;
   title.append(b, small);
+
+  const caret = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  caret.setAttribute('viewBox', '0 0 20 20');
+  caret.setAttribute('class', 'guide-caret');
+  caret.setAttribute('aria-hidden', 'true');
+  const caretPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  caretPath.setAttribute('d', 'm6.5 8.2 3.5 3.4 3.5-3.4');
+  caret.append(caretPath);
+
+  head.append(title, caret);
+  wrap.append(head);
+
+  // Всё остальное — под складкой
+  const body = document.createElement('div');
+  body.className = 'guide-inner';
+  body.hidden = !guideView.open;
 
   const osSeg = document.createElement('div');
   osSeg.className = 'seg';
@@ -1348,8 +1427,7 @@ function renderConnectGuide(box, connect) {
     osSeg.append(label);
   }
 
-  head.append(title, osSeg);
-  wrap.append(head);
+  body.append(osSeg);
 
   const kindSeg = document.createElement('div');
   kindSeg.className = 'seg seg-wide';
@@ -1369,18 +1447,19 @@ function renderConnectGuide(box, connect) {
     label.append(input, span);
     kindSeg.append(label);
   }
-  wrap.append(kindSeg);
+  body.append(kindSeg);
 
   const guide = connect.guides[guideView.platform]?.[guideView.kind];
   if (guide) {
-    wrap.append(guideBlock(guide.lead, guide.steps));
+    body.append(guideBlock(guide.lead, guide.steps));
     if (guide.alt) {
       const altTitle = document.createElement('div');
       altTitle.className = 'guide-alt';
       altTitle.textContent = guide.alt.title;
-      wrap.append(altTitle, guideBlock(null, guide.alt.steps));
+      body.append(altTitle, guideBlock(null, guide.alt.steps));
     }
   }
+  wrap.append(body);
 
   // Перерисовка на месте: блок инструкции всегда последний
   box.querySelector('.guide')?.remove();
