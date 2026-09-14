@@ -256,6 +256,7 @@ const CTX_ART = {
   open: '<path d="M9.4 4.6H5.6a1.6 1.6 0 0 0-1.6 1.6v10a1.6 1.6 0 0 0 1.6 1.6h10a1.6 1.6 0 0 0 1.6-1.6v-3.8"/><path d="M13 4h5v5"/><path d="m10.2 11.8 7.4-7.4"/>',
   folder: '<path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/>',
   share: '<path d="M11 14.4V3.8"/><path d="m7.2 7.2 3.8-3.4 3.8 3.4"/><path d="M4.4 12.4v4a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8v-4"/>',
+  rename: '<path d="M4.6 17.4h3.2l8-8a2.1 2.1 0 0 0-3-3l-8 8v3Z"/><path d="M13.4 5.6l3 3"/><path d="M4.6 19.6h12.8"/>',
   sort: '<path d="M6.4 4.6v12.8"/><path d="m3.6 7.4 2.8-2.8 2.8 2.8"/><path d="M12.2 6.4h6.2"/><path d="M12.2 11h4.4"/><path d="M12.2 15.6h2.6"/>',
   trash: '<path d="M4.6 6.4h12.8"/><path d="M8.6 6.4V4.8h4.8v1.6"/><path d="m6.2 6.4.8 10.2a1.6 1.6 0 0 0 1.6 1.4h4.8a1.6 1.6 0 0 0 1.6-1.4l.8-10.2"/>',
 };
@@ -786,55 +787,162 @@ function renderChips(box, items, { empty = 'Пока никого', onRemove } =
   }
 }
 
-/** Выбор из списка людей или чатов — вместо ввода числового id. */
-function pickFromList({ title, text, items, empty }) {
+/** Строка списка: кружок с фото или буквой, название и подпись под ним. */
+function pickerRow(item) {
+  const btn = document.createElement('button');
+  let avatar;
+  if (item.art) {
+    // «Создать новую группу» или «Удалить» — не чат, буква в кружке
+    // для них бессмысленна; цвет задаётся тем же способом, что везде
+    avatar = document.createElement('span');
+    avatar.className = 'picker-glyph';
+    if (item.tint) avatar.style.setProperty('--tint', item.tint);
+    avatar.innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true">${item.art}</svg>`;
+  } else {
+    avatar = makeAvatar({ key: item.id ?? item.label, letter: item.label, photo: item.photo });
+  }
+
+  const wrap = document.createElement('span');
+  const b = document.createElement('b');
+  b.textContent = item.label;
+  const small = document.createElement('small');
+  small.textContent = item.sub ?? '';
+  wrap.append(b, small);
+
+  btn.append(avatar, wrap);
+  btn.addEventListener('click', () => closeModal(item));
+  return btn;
+}
+
+const pickerText = (item) => [item.label, item.sub, item.username].filter(Boolean).join(' ')
+  .toLowerCase().replaceAll('@', '');
+
+/**
+ * Выбор из списка людей или чатов — вместо ввода числового id.
+ *
+ * `search` добавляет сверху поле, которое отсеивает список на лету и не
+ * уезжает при прокрутке: список бывает длинным, и мотать его до нужного
+ * человека — то же самое, что набирать id руками, от чего мы и уходили.
+ * `search.remote` подключает поиск за пределами списка (у нас — по всему
+ * Telegram): его результаты дописываются отдельной группой под своими.
+ */
+function pickFromList({ title, text, items, empty, search = null }) {
   return openModal({
     title,
     text,
     okText: '',
     cancelText: 'Закрыть',
     build: (body) => {
+      let input = null;
+      if (search) {
+        const box = document.createElement('div');
+        box.className = 'picker-search';
+        box.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true">'
+          + '<circle cx="8.8" cy="8.8" r="4.9"/><path d="m12.5 12.5 3.6 3.6"/></svg>';
+        input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = search.placeholder ?? 'Поиск';
+        box.append(input);
+        body.append(box);
+      }
+
       const list = document.createElement('div');
       list.className = 'picker';
+      body.append(list);
 
-      if (!items.length) {
-        const none = document.createElement('p');
-        none.className = 'hint';
-        none.textContent = empty;
-        list.append(none);
-      }
+      // Группа «нашлось снаружи» живёт отдельно: свои строки она не трогает
+      let found = null;
+      let state = '';
 
-      for (const item of items) {
-        const btn = document.createElement('button');
-        // «Создать новую группу» — не чат, буква в кружке для него бессмысленна
-        let avatar;
-        if (item.art) {
-          // «Создать новую группу» или «Удалить» — не чат, буква в кружке
-          // для них бессмысленна; цвет задаётся тем же способом, что везде
-          avatar = document.createElement('span');
-          avatar.className = 'picker-glyph';
-          if (item.tint) avatar.style.setProperty('--tint', item.tint);
-          avatar.innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true">${item.art}</svg>`;
-        } else {
-          avatar = makeAvatar({ key: item.id ?? item.label, letter: item.label, photo: item.photo });
+      const draw = (query) => {
+        list.innerHTML = '';
+        const q = query.trim().toLowerCase().replaceAll('@', '');
+        const seen = new Set();
+        let shown = 0;
+
+        // Подпись группы придерживаем до первой её строки: отсев мог убрать
+        // всю группу, и заголовок повис бы над пустотой
+        let head = null;
+        for (const item of items) {
+          if (item.head !== undefined) { head = item.head; continue; }
+          // Строки-действия («Создать группу») не отсеиваем: они нужны
+          // как раз тогда, когда ничего не нашлось
+          if (q && !item.always && !pickerText(item).includes(q)) continue;
+          if (head) { list.append(pickerHead(head)); head = null; }
+          seen.add(String(item.id));
+          list.append(pickerRow(item));
+          if (!item.always) shown += 1;
         }
 
-        const wrap = document.createElement('span');
-        const b = document.createElement('b');
-        b.textContent = item.label;
-        const small = document.createElement('small');
-        small.textContent = item.sub ?? '';
-        wrap.append(b, small);
+        if (found?.query === q && found.people.length) {
+          list.append(pickerHead(search.remoteLabel ?? 'Найдено'));
+          for (const p of found.people) {
+            if (seen.has(String(p.id))) continue;
+            list.append(pickerRow(p));
+            shown += 1;
+          }
+        }
 
-        btn.append(avatar, wrap);
-        btn.addEventListener('click', () => closeModal(item));
-        list.append(btn);
-      }
-      body.append(list);
-      return null;
+        if (state) list.append(pickerNote(state));
+        else if (!shown) list.append(pickerNote(q ? `По запросу «${query.trim()}» никого нет` : empty));
+      };
+
+      let timer = null;
+      let seq = 0;
+      input?.addEventListener('input', () => {
+        draw(input.value);
+        if (!search.remote) return;
+
+        const query = input.value.trim().toLowerCase().replaceAll('@', '');
+        clearTimeout(timer);
+        seq += 1;
+        if (query.length < 3) {
+          found = null;
+          state = '';
+          draw(input.value);
+          return;
+        }
+
+        // Ждём паузу в наборе: искать на каждую букву — это очередь запросов
+        // в Telegram и верный способ поймать ограничение
+        timer = setTimeout(async () => {
+          const mine = ++seq;
+          state = 'Ищу в Telegram…';
+          draw(input.value);
+          try {
+            const people = await search.remote(query);
+            if (mine !== seq) return;
+            found = { query, people };
+            state = '';
+          } catch (err) {
+            if (mine !== seq) return;
+            found = null;
+            state = err.message;
+          }
+          draw(input.value);
+        }, 450);
+      });
+      draw('');
+      return input;
     },
     collect: () => null,
   });
+}
+
+/** Подпись над группой строк. */
+function pickerHead(label) {
+  const head = document.createElement('div');
+  head.className = 'picker-head';
+  head.textContent = label;
+  return head;
+}
+
+/** Строка-пояснение вместо списка: «ничего не нашлось», «ищу…». */
+function pickerNote(textContent) {
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = textContent;
+  return note;
 }
 
 /* ── профили ─────────────────────────────────────────────────────────────── */
@@ -2132,7 +2240,9 @@ $('#deleteProfile').addEventListener('click', (e) => guard(e.target, async () =>
 /* ── диск: настоящий файловый менеджер ───────────────────────────────────── */
 
 // Где мы сейчас: '' — корень, иначе имя папки
-const drive = { folder: '', query: '', offset: 0, total: 0, data: null, sort: 'date', dir: 'desc' };
+// rows — то, что сейчас на экране, включая догруженные страницы: по нему
+// работает выделение (Shift отмечает диапазон именно видимого)
+const drive = { folder: '', query: '', offset: 0, total: 0, data: null, rows: [], sort: 'date', dir: 'desc' };
 
 // Порядок в списке. Название говорит, что получится, а не как это устроено:
 // «сначала новые» понятнее, чем «по дате, по убыванию»
@@ -2248,6 +2358,7 @@ async function loadDrive({ append = false } = {}) {
   });
   drive.data = data;
   drive.total = data.total;
+  drive.rows = append ? [...drive.rows, ...data.rows] : [...data.rows];
 
   $('#driveWhere').hidden = Boolean(data.chatId);
   driveChatInfo = data.chat ?? null;
@@ -2264,6 +2375,7 @@ async function loadDrive({ append = false } = {}) {
   renderCols();
   renderDriveBody(data, append);
 
+  paintSelection();
   drive.offset += data.rows.length;
   $('#driveMoreRow').hidden = drive.offset >= drive.total;
   $('#driveCounter').textContent = `Показано ${Math.min(drive.offset, drive.total)} из ${drive.total}`;
@@ -2419,7 +2531,18 @@ function folderCard(folder) {
     e.stopPropagation();
     card.classList.remove('drop-here');
     const file = dragged;
-    if (file) guard(null, () => moveFileTo(file, folder.path));
+    if (!file) return;
+    // Тащили отмеченное — переезжает вся пачка: иначе непонятно, почему
+    // подсвечено пять строк, а уехала одна
+    if (selection.size > 1 && selection.has(file.id)) {
+      guard(null, () => forEachSelected(
+        'Перекладываю',
+        (r) => api('/api/drive/move', { id: r.id, folder: folder.path, from: drive.folder }),
+        { done: (n) => `Переложено: ${n} → ${folder.path.split('/').join(' / ')}` },
+      ));
+      return;
+    }
+    guard(null, () => moveFileTo(file, folder.path));
   });
 
   return card;
@@ -2430,6 +2553,7 @@ function folderActions(folder, event) {
     title: folder.name,
     items: [
       { label: 'Открыть', art: CTX_ART.folder, run: () => openFolder(folder.path) },
+      { label: 'Переименовать…', art: CTX_ART.rename, run: () => renameFolderAsked(folder) },
       {
         label: 'Отправить человеку…',
         art: CTX_ART.share,
@@ -2443,6 +2567,27 @@ function folderActions(folder, event) {
       { label: 'Удалить папку', art: CTX_ART.trash, danger: true, run: () => removeFolderAsked(folder) },
     ],
   });
+}
+
+async function renameFolderAsked(folder) {
+  const name = await askText({
+    title: `Переименовать «${folder.name}»`,
+    text: 'Файлы останутся на месте — в Telegram сменится только название темы.',
+    placeholder: 'Новое имя',
+    value: folder.name,
+  });
+  if (!name || name === folder.name) return;
+
+  const r = await api('/api/drive/rename-folder', { path: folder.path, name, from: drive.folder });
+  // Если открыта сама переименованная папка, идти нужно уже по новому пути
+  if (drive.folder === folder.path) drive.folder = r.renamed.next;
+  else if (drive.folder.startsWith(`${folder.path}/`)) {
+    drive.folder = r.renamed.next + drive.folder.slice(folder.path.length);
+  }
+  await loadDrive();
+  toast(r.renamed.failed
+    ? `Папка переименована, но тему в Telegram переименовать не вышло`
+    : `Папка «${folder.name}» → «${name}»`);
 }
 
 async function removeFolderAsked(folder) {
@@ -2472,10 +2617,24 @@ async function removeFolderAsked(folder) {
 function fileCard(r) {
   const card = document.createElement('div');
   card.className = 'file-row';
+  card.dataset.id = String(r.id);
   card.title = `${r.name}${r.folder ? ` · папка ${r.folder}` : ''}`;
+  card.classList.toggle('selected', selection.has(r.id));
 
   const icon = fileGlyph(r.name, { kind: r.file_type ?? r.kind });
   if (r.status !== 'sent') icon.classList.add('pending');
+
+  // Галочка поверх значка: видна, когда на строку навели или её отметили.
+  // Так отметить можно мышью, не запоминая сочетаний клавиш
+  const pick = document.createElement('button');
+  pick.className = 'file-pick';
+  pick.title = 'Отметить';
+  pick.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.4 10.4 3 3 6.2-6.6"/></svg>';
+  pick.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSelected(r, e.shiftKey);
+  });
+  icon.append(pick);
 
   const name = document.createElement('span');
   name.className = 'file-name';
@@ -2512,18 +2671,30 @@ function fileCard(r) {
 
   card.append(icon, name, size, when, menu);
 
-  // Щелчок открывает само сообщение в Telegram, правая кнопка — меню действий
-  card.addEventListener('click', () => {
+  // Щелчок открывает само сообщение в Telegram, правая кнопка — меню действий.
+  // С Ctrl (на маке — ⌘) и Shift щелчок отмечает: так в любом файловом
+  // менеджере, и человеку не нужно целиться в галочку
+  card.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || selection.size) {
+      toggleSelected(r, e.shiftKey);
+      return;
+    }
     if (r.link) window.open(r.link, '_blank', 'noopener');
     else toast('Файл ещё не отправлен', true);
   });
-  card.addEventListener('contextmenu', (e) => fileActions(r, e));
+  card.addEventListener('contextmenu', (e) => {
+    // Правая кнопка по отмеченному — меню на всю пачку, а не на одну строку
+    if (selection.size > 1 && selection.has(r.id)) return bulkActions(e);
+    fileActions(r, e);
+  });
 
   // Перетаскивание: файл можно бросить на папку — как в проводнике
   card.draggable = true;
   card.addEventListener('dragstart', (e) => {
     dragged = r;
     card.classList.add('dragging');
+    // Потащили то, что не отмечено, — значит, речь про него одного
+    if (!selection.has(r.id)) clearSelection();
     e.dataTransfer.effectAllowed = 'move';
     // Свой тип, чтобы отличать наш файл от файлов, притащенных из системы
     e.dataTransfer.setData(DRAG_TYPE, String(r.id));
@@ -2689,64 +2860,41 @@ async function pickPersonAndSend({ title, send, done }) {
   const often = people.filter((p) => p.often).map(asItem);
   const rest = people.filter((p) => !p.often).map(asItem);
 
-  const picked = await pickFromList({
+  const target = await pickFromList({
     title,
     text: 'Человек получит только это — копией в личные сообщения. Ни чата, ни остальных файлов он не увидит.',
-    items: [
-      ...often,
-      ...rest,
-      {
-        id: '__search__',
-        label: 'Найти в Telegram',
-        sub: account ? 'По имени или @имени' : 'Нужен вход в аккаунт',
-        art: '<circle cx="9.6" cy="9.6" r="5.4"/><path d="m13.8 13.8 4 4"/>',
-        tint: '#8e8e93',
-      },
-    ],
+    // Группы подписываем, только если есть обе: одинокий заголовок
+    // над единственным списком ничего не объясняет
+    items: often.length && rest.length
+      ? [{ head: 'Кому чаще всего' }, ...often, { head: 'Контакты' }, ...rest]
+      : [...often, ...rest],
     empty: 'Пока некому: войдите в аккаунт, чтобы увидеть контакты, или попросите человека написать боту.',
+    // Отдельного окна «найти в Telegram» больше нет: то же поле сначала
+    // отсеивает своих, а если человека среди них нет — ищет по Telegram.
+    // Человек набирает имя один раз и не думает, где оно ищется
+    search: {
+      placeholder: account ? 'Имя или @имя — ищу и в Telegram' : 'Имя или @имя',
+      remoteLabel: 'Из Telegram',
+      remote: account
+        ? async (query) => (await api('/api/drive/people/search', { query })).people.map(searchItem)
+        : null,
+    },
   });
-  if (!picked) return;
-
-  let target = picked;
-  if (picked.id === '__search__') {
-    target = await searchPerson();
-    if (!target) return;
-  }
+  if (!target) return;
 
   await send({ userId: target.id, username: target.username, name: target.name ?? target.label });
   toast(done(target.name ?? target.label));
 }
 
-/** Поиск по Telegram — когда человека нет ни в частых, ни в контактах. */
-async function searchPerson() {
-  const query = await askText({
-    title: 'Найти в Telegram',
-    text: 'Имя или @имя. Ищу среди ваших контактов и по всему Telegram.',
-    placeholder: 'Маша или @masha',
-    okText: 'Искать',
-  });
-  if (!query) return null;
-
-  const { people } = await api('/api/drive/people/search', { query });
-  if (!people.length) {
-    toast(`По запросу «${query}» никого не нашлось`, true);
-    return null;
-  }
-
-  return pickFromList({
-    title: `Нашлось: ${people.length}`,
-    text: 'Выберите, кому отправить.',
-    items: people.map((p) => ({
-      id: p.id,
-      label: p.name,
-      sub: [p.username ? `@${p.username}` : null, p.contact ? 'ваш контакт' : null].filter(Boolean).join(' · '),
-      username: p.username,
-      name: p.name,
-      photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
-    })),
-    empty: '',
-  });
-}
+/** Человек, найденный по всему Telegram, — строкой для того же списка. */
+const searchItem = (p) => ({
+  id: p.id,
+  label: p.name,
+  sub: [p.username ? `@${p.username}` : null, p.contact ? 'ваш контакт' : null].filter(Boolean).join(' · '),
+  username: p.username,
+  name: p.name,
+  photo: `/api/user-photo?id=${encodeURIComponent(p.id)}`,
+});
 
 /* ── действия над файлом ─────────────────────────────────────────────────── */
 
@@ -2776,6 +2924,24 @@ const fileOps = {
     await api('/api/drive/note', { id: r.id, note: text });
     await loadDrive();
     toast(text ? 'Заметка сохранена' : 'Заметка убрана');
+  },
+
+  // Имя — то, по которому файл ищут и узнают. В Telegram оно записано
+  // в подписи, её программа поправит сама, если сообщение её
+  rename: async (r) => {
+    const name = await askText({
+      title: 'Переименовать файл',
+      text: 'Сам файл в Telegram останется прежним — поменяется имя в списке и подпись под ним.',
+      value: r.name,
+      placeholder: 'Новое имя',
+    });
+    if (!name || name === r.name) return;
+
+    const res = await api('/api/drive/rename', { id: r.id, name, from: drive.folder });
+    await loadDrive();
+    toast(res.renamed.caption
+      ? `«${r.name}» → «${name}»`
+      : `Переименован, но подпись в Telegram осталась прежней — это сообщение программа править не может`);
   },
 
   /**
@@ -2832,6 +2998,7 @@ function fileMenuItems(r) {
 
   if (noteEditable(r)) items.push({ label: 'Заметка к файлу', art: CTX_ART.note, run: () => fileOps.note(r) });
   items.push(
+    { label: 'Переименовать…', art: CTX_ART.rename, run: () => fileOps.rename(r) },
     { label: 'Переложить в папку…', art: CTX_ART.move, run: () => fileOps.move(r) },
     'sep',
     { label: 'Убрать с диска', art: CTX_ART.trash, danger: true, run: () => fileOps.remove(r) },
@@ -2840,6 +3007,196 @@ function fileMenuItems(r) {
 }
 
 const fileActions = (r, event) => openContextMenu(event, { title: r.name, items: fileMenuItems(r) });
+
+/* ── отметить несколько и сделать со всеми разом ─────────────────────────── */
+
+/**
+ * Что отмечено: id файлов. Отмечаются только файлы — действия пачкой
+ * (скачать, переложить, отправить, убрать) все про них; папка остаётся
+ * со своим меню, там и удаление другое — вместе с темой в Telegram.
+ *
+ * `anchor` — строка, от которой отсчитывается выделение с Shift.
+ */
+const selection = new Set();
+let anchor = null;
+
+/** Все файлы на экране в том порядке, в каком они видны: нужно для Shift. */
+const shownFiles = () => (drive.rows ?? []);
+
+function toggleSelected(r, range = false) {
+  const rows = shownFiles();
+  if (range && anchor !== null) {
+    const from = rows.findIndex((x) => x.id === anchor);
+    const to = rows.findIndex((x) => x.id === r.id);
+    if (from >= 0 && to >= 0) {
+      for (const row of rows.slice(Math.min(from, to), Math.max(from, to) + 1)) selection.add(row.id);
+      return paintSelection();
+    }
+  }
+
+  if (selection.has(r.id)) selection.delete(r.id);
+  else selection.add(r.id);
+  anchor = r.id;
+  paintSelection();
+}
+
+function clearSelection() {
+  if (!selection.size) return;
+  selection.clear();
+  anchor = null;
+  paintSelection();
+}
+
+/** Перерисовывает отметки и полосу действий, не трогая сам список. */
+function paintSelection() {
+  // Отмеченное могло уехать со сменой папки или из-за поиска — забываем о нём
+  const alive = new Set(shownFiles().map((r) => r.id));
+  for (const id of selection) if (!alive.has(id)) selection.delete(id);
+
+  for (const card of $$('#driveBody .file-row[data-id]')) {
+    card.classList.toggle('selected', selection.has(Number(card.dataset.id)));
+  }
+
+  const n = selection.size;
+  $('#driveBulk').hidden = !n;
+  $('#driveBulkCount').textContent = `Отмечено ${n} ${plural(n, 'файл', 'файла', 'файлов')}`;
+  // Сообщения всплывают там же, внизу по центру, и легли бы прямо на полосу.
+  // Действия пачкой как раз ими и отчитываются — поднимаем их повыше
+  document.body.classList.toggle('with-bulk', Boolean(n));
+}
+
+/** Отмеченные записи целиком — по ним и работают действия пачкой. */
+const selectedRows = () => shownFiles().filter((r) => selection.has(r.id));
+
+/**
+ * Делает одно и то же со всеми отмеченными и показывает, чем кончилось.
+ * По одному, а не разом: Telegram не любит очередь запросов, а так
+ * человек видит, сколько прошло, даже если что-то одно не вышло.
+ */
+async function forEachSelected(what, run, { done }) {
+  const rows = selectedRows();
+  let ok = 0;
+  const failed = [];
+
+  toast(`${what}: 0 из ${rows.length}…`);
+  for (const r of rows) {
+    try {
+      await run(r);
+      ok += 1;
+      toast(`${what}: ${ok} из ${rows.length}…`);
+    } catch (err) {
+      failed.push(`${r.name}: ${err.message}`);
+    }
+  }
+
+  clearSelection();
+  await loadDrive();
+  if (failed.length) toast(`${done(ok)}, не вышло ${failed.length}: ${failed[0]}`, true);
+  else toast(done(ok));
+}
+
+const bulkActions = (event) => openContextMenu(event, {
+  title: `Отмечено ${selection.size}`,
+  items: [
+    { label: 'Скачать на компьютер', art: CTX_ART.download, run: bulkOps.download },
+    { label: 'Отправить человеку…', art: CTX_ART.share, run: bulkOps.share },
+    { label: 'Переложить в папку…', art: CTX_ART.move, run: bulkOps.move },
+    'sep',
+    { label: 'Убрать с диска', art: CTX_ART.trash, danger: true, run: bulkOps.remove },
+  ],
+});
+
+const bulkOps = {
+  download: () => forEachSelected(
+    'Скачиваю',
+    (r) => api('/api/drive/download', { id: r.id }),
+    { done: (n) => `Скачано файлов: ${n}` },
+  ),
+
+  move: async () => {
+    const n = selection.size;
+    const folder = await pickFolderTree({
+      title: `Куда переложить ${n} ${plural(n, 'файл', 'файла', 'файлов')}`,
+      text: 'В самом Telegram сообщения останутся на месте — меняется только папка на диске.',
+      // Папку, где отмеченные и так лежат, предлагать незачем. При поиске
+      // они могут быть из разных мест — тогда не запрещаем ничего
+      skip: drive.query ? null : drive.folder,
+    });
+    // Закрыли окно, ничего не выбрав, — это отказ. Корень диска приходит
+    // пустой строкой, и спутать его с отказом нельзя
+    if (folder === null) return;
+    await forEachSelected(
+      'Перекладываю',
+      (r) => api('/api/drive/move', { id: r.id, folder, from: drive.folder }),
+      { done: (n) => `Переложено: ${n} → ${folder ? folder.split('/').join(' / ') : 'корень диска'}` },
+    );
+  },
+
+  // Одному человеку — всю пачку: спрашиваем один раз, шлём по одному
+  share: async () => {
+    const rows = selectedRows();
+    await pickPersonAndSend({
+      title: `Кому отправить ${rows.length} ${plural(rows.length, 'файл', 'файла', 'файлов')}`,
+      send: async (to) => {
+        for (const r of rows) await api('/api/drive/share', { id: r.id, ...to });
+      },
+      done: (who) => `Отправлено файлов: ${rows.length} → ${who}`,
+    });
+    clearSelection();
+    await loadDrive();
+  },
+
+  remove: async () => {
+    const n = selection.size;
+    const ok = await askConfirm({
+      title: `Убрать ${n} ${plural(n, 'файл', 'файла', 'файлов')} с диска?`,
+      text: 'Сообщения в Telegram будут удалены. Файлы на компьютере, если они там есть, останутся.',
+      icon: 'trash',
+      okText: 'Убрать',
+      danger: true,
+    });
+    if (!ok) return;
+    await forEachSelected(
+      'Убираю',
+      (r) => api('/api/drive/remove', { id: r.id }),
+      { done: (done) => `Убрано с диска: ${done}` },
+    );
+  },
+};
+
+$('#bulkDownload').addEventListener('click', (e) => guard(e.currentTarget, bulkOps.download));
+$('#bulkMove').addEventListener('click', (e) => guard(e.currentTarget, bulkOps.move));
+$('#bulkShare').addEventListener('click', (e) => guard(e.currentTarget, bulkOps.share));
+$('#bulkRemove').addEventListener('click', (e) => guard(e.currentTarget, bulkOps.remove));
+$('#bulkClear').addEventListener('click', clearSelection);
+
+/**
+ * Клавиши как в файловом менеджере. Только когда открыт диск и курсор
+ * не в поле ввода: иначе Ctrl+A выделял бы файлы вместо текста в поиске.
+ */
+document.addEventListener('keydown', (e) => {
+  if ($('#pane-drive')?.classList.contains('active') !== true) return;
+  if (!$('#modal').hidden) return;
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? '');
+
+  if (e.key === 'Escape' && selection.size) {
+    clearSelection();
+    return;
+  }
+  if (typing) return;
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    for (const r of shownFiles()) selection.add(r.id);
+    paintSelection();
+    return;
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size) {
+    e.preventDefault();
+    guard(null, bulkOps.remove);
+  }
+});
+
 
 async function moveFileTo(r, folder) {
   await api('/api/drive/move', { id: r.id, folder, from: drive.folder });
@@ -3779,41 +4136,7 @@ function thumbFor(r, big = false) {
   return glyph;
 }
 
-function appendArchiveGrid(rows) {
-  const box = $('#archiveRows');
-  for (const r of rows) {
-    const cell = r.link ? document.createElement('a') : document.createElement('div');
-    cell.className = 'grid-cell';
-    if (r.link) {
-      cell.href = r.link;
-      cell.target = '_blank';
-      cell.rel = 'noopener';
-    }
-    cell.title = r.rel_path || r.name;
-    cell.append(thumbFor(r, true));
-
-    const caption = document.createElement('span');
-    caption.className = 'grid-caption';
-    const when = document.createElement('b');
-    when.textContent = r.taken_at
-      ? new Date(r.taken_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })
-      : '—';
-    const who = document.createElement('small');
-    who.textContent = r.name;
-    caption.append(when, who);
-    cell.append(caption);
-    box.append(cell);
-  }
-}
-
 function appendArchiveRows(rows) {
-  if ($('#segArchiveView input:checked')?.value === 'grid') {
-    appendArchiveGrid(rows);
-    archiveOffset += rows.length;
-    updateArchiveFooter();
-    return;
-  }
-
   const box = $('#archiveRows');
   for (const r of rows) {
     const row = document.createElement('div');
@@ -3885,7 +4208,6 @@ async function reloadArchiveRows() {
 
   const box = $('#archiveRows');
   box.innerHTML = '';
-  box.classList.toggle('grid-view', $('#segArchiveView input:checked')?.value === 'grid');
   archiveOffset = 0;
   archiveTotal = page.total;
 
@@ -3906,7 +4228,7 @@ $('#archiveSearch').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => guard(null, reloadArchiveRows), 300);
 });
-$$('#segArchiveStatus input, #segArchiveView input').forEach((i) =>
+$$('#segArchiveStatus input').forEach((i) =>
   i.addEventListener('change', () => guard(null, reloadArchiveRows)));
 
 async function loadArchive() {
@@ -3930,7 +4252,6 @@ async function loadArchive() {
 
   const rows = $('#archiveRows');
   rows.innerHTML = '';
-  rows.classList.toggle('grid-view', $('#segArchiveView input:checked')?.value === 'grid');
   archiveOffset = 0;
   archiveTotal = a.page?.total ?? 0;
 

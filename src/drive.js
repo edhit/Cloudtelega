@@ -17,15 +17,16 @@ import { log, humanSize } from './logger.js';
 import { describeError } from './errors.js';
 import {
   driveRootCount, driveStats, dropFolder, fileById, findByHash, listDriveFolders,
-  markFailed, markSent, putTopic, searchFiles, setFileFolder, setFileNote, upsertPending,
+  markFailed, markSent, putTopic, renameFolder, searchFiles, setFileFolder, setFileName,
+  setFileNote, upsertPending,
 } from './db.js';
 import { sha256Cached } from './hash.js';
 import { extOf, kindOf, mimeOf } from './media.js';
 import { normalizeStem } from './naming.js';
 import { messageLink } from './links.js';
 import {
-  botConfigured, copyMessage, deleteForumTopic, deleteMessage, editMessageCaption,
-  sendFileViaBot,
+  botConfigured, copyMessage, deleteForumTopic, deleteMessage, editForumTopic,
+  editMessageCaption, sendFileViaBot,
 } from './telegram/botApi.js';
 import {
   copyMessageToPerson, deleteMessageViaAccount, downloadMessageFile, editCaptionViaAccount,
@@ -170,6 +171,69 @@ export async function removeFolder(raw) {
 
   log.ok(`Папка «${path}» убрана: файлов ${files.length}, тем ${topics.length}`);
   return { path, files: files.length, topics: topics.length, failed };
+}
+
+/**
+ * Переименовать файл. Имя живёт в нашем списке, а в Telegram оно записано
+ * в подписи — её и поправим, если сообщение наше. Не вышло поправить подпись
+ * (файл выложили руками, аккаунт не подключён) — это не повод отказывать
+ * в переименовании: список человека важнее ровной подписи в чате.
+ */
+export async function renameFile(id, raw) {
+  const row = fileById(id);
+  if (!row) throw new Error(`Записи ${id} нет в базе`);
+
+  const name = String(raw ?? '').replace(/[\u0000-\u001f/\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!name) throw new Error('Пустое имя');
+  if (name === row.name) return { id, name, caption: true };
+
+  setFileName(id, name);
+
+  let caption = true;
+  try {
+    await setNote(id, row.note ?? '');
+  } catch {
+    // Подпись осталась старой — скажем об этом наверху, но имя уже новое
+    caption = false;
+  }
+  log.ok(`«${row.name}» → «${name}»`);
+  return { id, name, caption };
+}
+
+/**
+ * Переименовать папку. На диске меняется путь у всего, что внутри,
+ * в Telegram — название темы. Сообщения остаются на месте: тема и есть
+ * папка, перекладывать при переименовании нечего.
+ */
+export async function renamePath(raw, nextName) {
+  const path = cleanFolderPath(raw);
+  const chatId = driveChatId();
+  if (!chatId) throw new Error('Не выбран чат для диска');
+
+  const parent = path.split('/').slice(0, -1).join('/');
+  const next = cleanFolderPath([parent, nextName].filter(Boolean).join('/'));
+  if (next === path) return { path, next, files: 0, topics: 0 };
+
+  const exists = folders(parent).list.some((f) => f.path === next);
+  if (exists) throw new Error(`Папка «${next.split('/').at(-1)}» здесь уже есть`);
+
+  const { files, topics } = renameFolder(chatId, BUCKET, path, next);
+
+  let failed = 0;
+  for (const topic of topics) {
+    if (!topic.topic_id) continue;
+    // Ключ темы менялся вместе с путём — новое название считаем от него
+    const renamed = next + topic.key.slice(path.length);
+    try {
+      await editForumTopic(topic.topic_id, topicNameFor(renamed), chatId);
+    } catch (err) {
+      failed += 1;
+      log.warn(`Тему «${topic.key}» переименовать не вышло: ${describeError(err, { kind: 'bot' })}`);
+    }
+  }
+
+  log.ok(`Папка «${path}» → «${next}»: файлов ${files}, тем ${topics.length}`);
+  return { path, next, files, topics: topics.length, failed };
 }
 
 /** Переложить файл в другую папку. */

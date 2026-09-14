@@ -438,6 +438,8 @@ textarea { resize: vertical; min-height: 72px; font-family: ui-monospace, 'SF Mo
   opacity: 0; pointer-events: none; transition: all 0.22s; z-index: 50;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* Полоса отмеченного стоит внизу по центру — сообщение уступает ей место */
+body.with-bulk .toast { bottom: 92px; }
 .toast.err { background: rgba(255, 59, 48, 0.95); }
 
 @media (max-width: 820px) {
@@ -640,10 +642,28 @@ a { color: var(--accent); }
 .chip-item .chip-x:hover { background: var(--red); color: #fff; }
 .chips-empty { color: var(--text-3); font-size: 13px; }
 
+/* Поле поиска стоит НАД прокруткой списка — оно не уезжает, сколько бы
+   имён ни было ниже. Список длинный, и мотать его до нужного человека —
+   то же, что набирать id руками, от чего мы и уходили */
+.picker-search {
+  position: relative; margin-top: 14px;
+}
+.picker-search svg {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  width: 17px; height: 17px; pointer-events: none;
+  fill: none; stroke: var(--text-3); stroke-width: 1.8; stroke-linecap: round;
+}
+.picker-search input { margin: 0; padding-left: 34px; }
+
 .picker {
   display: grid; gap: 6px; margin-top: 12px; text-align: left;
   max-height: min(52vh, 420px); overflow-y: auto;
 }
+.picker-head {
+  padding: 8px 10px 2px; font-size: 11.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3);
+}
+.picker .hint { margin: 10px 10px 6px; text-align: left; }
 .picker button {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 9px 10px; border: 0; border-radius: 10px;
@@ -699,6 +719,18 @@ a { color: var(--accent); }
    с шапкой хранилища) оказывается под ним и выцветает */
 .content > * { position: relative; z-index: 1; }
 
+/* Крошки, поиск и названия колонок не уезжают при прокрутке: без них
+   в длинном списке не понять ни где ты, ни что значит колонка */
+.toolbar-filters { padding-top: 0; }
+.toolbar-filters .seg { margin: 0; }
+
+.drive-sticky {
+  position: sticky; top: 0; z-index: 3;
+  /* Непрозрачный фон обязателен: сквозь прозрачный видно уезжающие строки */
+  background: var(--bg); box-shadow: 0 1px 0 var(--sep);
+  margin: 0 -6px; padding: 0 6px;
+}
+
 .danger-zone { border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
 
 /* ── плитка миниатюр ─────────────────────────────────────────────────────── */
@@ -707,21 +739,54 @@ a { color: var(--accent); }
   width: 44px; height: 44px; flex: none; border-radius: 8px; object-fit: cover;
   background: var(--chip); display: grid; place-items: center; font-size: 18px; color: var(--text-3);
 }
-/* Плитка без картинок: значок вида файла, дата и имя — картинок тут нет
-   намеренно, их загрузка сажала бота на flood limit Telegram */
-.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; padding: 12px; }
-.grid-cell {
-  display: grid; gap: 6px; place-items: center; align-content: center;
-  aspect-ratio: 1; padding: 10px 8px; border-radius: 10px;
-  background: var(--chip); color: inherit; text-decoration: none;
-}
-a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip)); }
+/* ── отметить несколько файлов ───────────────────────────────────────────── */
 
-.grid-cell .grid-caption { display: grid; gap: 1px; text-align: center; max-width: 100%; }
-.grid-cell .grid-caption b { font-size: 12px; font-weight: 500; }
-.grid-cell .grid-caption small {
-  font-size: 10.5px; color: var(--text-3);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Галочка живёт поверх значка файла: строка не становится шире, а отметить
+   можно мышью — не всякий знает про Ctrl+щелчок */
+.file-pick {
+  position: absolute; inset: 0; z-index: 1; display: grid; place-items: center;
+  border: 0; border-radius: inherit; padding: 0; cursor: pointer;
+  background: var(--chip); color: var(--text-3);
+  /* Не display:none: галочка должна доставаться с клавиатуры и читалкой,
+     а прячем её видом — она проявляется, когда до строки есть дело */
+  opacity: 0; transition: opacity 0.12s;
+}
+.file-pick svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor;
+  stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+.file-row:hover .file-pick,
+.file-row.selected .file-pick,
+.file-pick:focus-visible { opacity: 1; }
+.file-pick:hover { background: color-mix(in srgb, var(--accent) 18%, var(--chip)); }
+.file-row.selected .file-pick { background: var(--accent); color: #fff; }
+
+.file-row.selected { background: color-mix(in srgb, var(--accent) 11%, var(--panel)); }
+.file-row.selected:hover { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); }
+
+/* Полоса действий висит внизу окна, а не уезжает вместе со списком:
+   отметил файлы в начале, домотал до конца — и она всё ещё под рукой */
+.bulk {
+  position: fixed; left: 50%; bottom: 18px; z-index: 40;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  /* width по содержимому: без него flex-контейнер «схлопывается» до ширины
+     самой длинной строки и переносит кнопки под счётчик, хотя место есть */
+  width: max-content; max-width: min(880px, calc(100vw - 32px));
+  padding: 9px 12px 9px 16px; border-radius: 14px;
+  background: var(--panel); box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--sep);
+  animation: bulk-up 0.16s ease;
+}
+@keyframes bulk-up { from { transform: translate(-50%, 12px); opacity: 0; } }
+.bulk-count { font-size: 13.5px; font-weight: 600; }
+.bulk-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.bulk .btn { padding: 7px 11px; }
+.bulk .btn span { font-size: 13px; }
+/* На узком экране подписи уступают место значкам — кнопки остаются в строку */
+@media (max-width: 760px) {
+  .bulk-count { width: 100%; }
+  .bulk .btn span { display: none; }
 }
 
 /* Диск и снимки в одном чате — предупреждаем цветом, а не молчим */
@@ -1015,7 +1080,7 @@ a.grid-cell:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chip
 
 /* Значок типа файла: обводка одним цветом на мягкой подложке */
 .glyph {
-  display: grid; place-items: center; flex: none;
+  display: grid; place-items: center; flex: none; position: relative;
   width: 52px; height: 52px; border-radius: 14px;
   background: color-mix(in srgb, var(--tint, var(--accent)) 13%, transparent);
   color: var(--tint, var(--accent));

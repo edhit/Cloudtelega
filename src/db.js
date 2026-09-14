@@ -943,6 +943,47 @@ export function setFileNote(id, note) {
   return fileById(id);
 }
 
+/**
+ * Переименовать файл. Меняется только имя в списке: сам файл в Telegram
+ * так и лежит под своим, и перезаливать его ради имени мы не станем —
+ * это минуты и трафик там, где человек поправил опечатку.
+ */
+export function setFileName(id, name) {
+  openDb().prepare('UPDATE files SET name = ? WHERE id = ?').run(String(name), Number(id));
+  return fileById(id);
+}
+
+/**
+ * Переименовать папку: у всех файлов внутри путь начинается с нового имени.
+ * Правим и саму папку, и всё вложенное — одним запросом на префикс, иначе
+ * «Договоры/2026» осталось бы висеть под старым «Договоры».
+ *
+ * Возвращает записи о темах, которым тоже нужно новое название в Telegram.
+ */
+export function renameFolder(chatId, bucket, path, next) {
+  const d = openDb();
+  const like = `${path}/%`;
+  const cut = path.length;
+
+  const files = d.prepare(
+    'SELECT COUNT(*) n FROM files WHERE bucket = ? AND (folder = ? OR folder LIKE ?)',
+  ).get(bucket, path, like)?.n ?? 0;
+
+  d.prepare(
+    'UPDATE files SET folder = ? || substr(folder, ?) WHERE bucket = ? AND (folder = ? OR folder LIKE ?)',
+  ).run(next, cut + 1, bucket, path, like);
+
+  const topics = d.prepare(
+    'SELECT key, topic_id FROM topics WHERE chat_id = ? AND bucket = ? AND (key = ? OR key LIKE ?)',
+  ).all(String(chatId), bucket, path, like);
+
+  d.prepare(
+    'UPDATE topics SET key = ? || substr(key, ?) WHERE chat_id = ? AND bucket = ? AND (key = ? OR key LIKE ?)',
+  ).run(next, cut + 1, String(chatId), bucket, path, like);
+
+  return { files: Number(files), topics };
+}
+
 /** Переложить файл в другую папку (в самом Telegram сообщение не двигается). */
 export function setFileFolder(id, folder) {
   openDb().prepare('UPDATE files SET folder = ? WHERE id = ?').run(folder || null, Number(id));

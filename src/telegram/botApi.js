@@ -230,6 +230,15 @@ export async function createForumTopicViaBot(title, chatId = config.chatId) {
 }
 
 /**
+ * Переименовывает тему. Сообщения в ней остаются на месте: в Telegram
+ * тема — это папка, и переименование папки не должно ничего перекладывать.
+ */
+export async function editForumTopic(topicId, title, chatId = config.chatId) {
+  await call('editForumTopic', { chat_id: chatId, message_thread_id: topicId, name: title });
+  return true;
+}
+
+/**
  * Удаляет тему вместе со всеми сообщениями в ней. Telegram отдельной «корзины»
  * для темы не держит: удаление необратимо, поэтому наверху обязательно
  * спрашиваем подтверждение.

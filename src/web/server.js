@@ -21,7 +21,8 @@ import { collect, isRunning, requestStop, runSend, sendState } from '../pipeline
 import { summarizeUnreadable } from '../scanner.js';
 import {
   createFolder, driveOverview, folders as driveFolders, getFileBack, moveFile,
-  putMany, putUploaded, removeFolder, removeFromDrive, setNote, shareFile, shareFolder,
+  putMany, putUploaded, removeFolder, removeFromDrive, renameFile, renamePath,
+  setNote, shareFile, shareFolder,
 } from '../drive.js';
 import {
   accessOverview, createAccessLink, expireGuests, extendGuest, presetHours,
@@ -1108,6 +1109,16 @@ const routes = {
   'POST /api/drive/move': async (body) => {
     moveFile(Number(body?.id), body?.folder ?? null);
     return drivePage({ folder: body?.from ?? null });
+  },
+
+  'POST /api/drive/rename': async (body) => {
+    const r = await renameFile(Number(body?.id), body?.name ?? '');
+    return { renamed: r, ...drivePage({ folder: body?.from ?? null }) };
+  },
+
+  'POST /api/drive/rename-folder': async (body) => {
+    const r = await renamePath(String(body?.path ?? ''), body?.name ?? '');
+    return { renamed: r, ...drivePage({ folder: body?.from || null }) };
   },
 
   /* ── доступ к диску ─────────────────────────────────────────────────── */

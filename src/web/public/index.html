@@ -623,6 +623,7 @@
         </div>
       </div>
 
+      <div class="drive-sticky">
       <div class="toolbar">
         <nav class="crumbs" id="driveCrumbs"></nav>
         <label class="search">
@@ -643,6 +644,7 @@
         <button class="col col-date" data-sort="date">Загружен</button>
         <span class="col-menu"></span>
       </div>
+      </div>
 
       <div class="dropzone" id="driveDrop">
         <div class="drop-hint" id="driveDropHint">
@@ -656,6 +658,34 @@
       <div class="btn-row" id="driveMoreRow" hidden>
         <button class="btn" id="driveMore">Показать ещё 100</button>
         <span class="hint" style="margin:0" id="driveCounter"></span>
+      </div>
+
+      <!-- Полоса появляется, только когда что-то отмечено: пока ничего не
+           выбрано, ей нечего показывать, и она не занимает места -->
+      <div class="bulk" id="driveBulk" hidden>
+        <span class="bulk-count" id="driveBulkCount"></span>
+        <div class="bulk-acts">
+          <button class="btn btn-icon" id="bulkDownload">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7.8 10.8 4.2 4.2 4.2-4.2"/><path d="M5 17.6v1.2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1.2"/></svg>
+            <span>Скачать</span>
+          </button>
+          <button class="btn btn-icon" id="bulkMove">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4Z"/><path d="M9.6 12.4h5"/><path d="m12.6 10.4 2 2-2 2"/></svg>
+            <span>Переложить</span>
+          </button>
+          <button class="btn btn-icon" id="bulkShare">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.4V4.8"/><path d="m8.2 8.2 3.8-3.4 3.8 3.4"/><path d="M5.4 13.4v4a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8v-4"/></svg>
+            <span>Отправить</span>
+          </button>
+          <button class="btn btn-icon btn-danger" id="bulkRemove">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14"/><path d="M9.4 7V5.4h5.2V7"/><path d="m6.8 7 .9 11.2a1.8 1.8 0 0 0 1.8 1.6h5a1.8 1.8 0 0 0 1.8-1.6L17.2 7"/></svg>
+            <span>Убрать</span>
+          </button>
+          <button class="btn btn-icon" id="bulkClear" title="Снять выделение (Esc)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+            <span>Снять</span>
+          </button>
+        </div>
       </div>
 
       <div class="group-title">Ещё</div>
@@ -785,10 +815,20 @@
 
       <div class="grid2" id="archiveNumbers"></div>
 
-      <div class="group-title">Поиск</div>
-      <div class="group" style="padding: 14px 16px">
-        <input type="text" id="archiveSearch" placeholder="Имя файла или папка — например, IMG_0373 или 2020" autocomplete="off">
-        <div class="btn-row">
+      <!-- Поиск и отбор — той же полосой, что на диске, и так же не уезжают
+           при прокрутке: список длинный, а искать в нём приходится часто -->
+      <div class="drive-sticky">
+        <div class="toolbar">
+          <span class="group-title" id="archiveRowsTitle" style="padding:0">Что внутри</span>
+          <label class="search">
+            <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.2"/><path d="m12.8 12.8 3.6 3.6"/></svg>
+            <input type="text" id="archiveSearch" placeholder="Поиск" autocomplete="off" spellcheck="false">
+            <button type="button" class="search-clear" id="archiveSearchClear" hidden aria-label="Очистить">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.6 6.6 6.8 6.8M13.4 6.6l-6.8 6.8"/></svg>
+            </button>
+          </label>
+        </div>
+        <div class="toolbar toolbar-filters">
           <div class="seg" id="segArchiveStatus">
             <label><input type="radio" name="archstatus" value="" checked><span>Все</span></label>
             <label><input type="radio" name="archstatus" value="sent"><span>В архиве</span></label>
@@ -796,17 +836,10 @@
             <label><input type="radio" name="archstatus" value="skipped"><span>Пропущенные</span></label>
           </div>
         </div>
-        <p class="hint">Нажмите на найденный файл — откроется само сообщение в Telegram: там и снимок в полном размере. Сами картинки программа сюда не тянет, чтобы не упереться в ограничения Telegram на число запросов.</p>
       </div>
 
-      <div class="btn-row" style="justify-content:space-between">
-        <span class="group-title" id="archiveRowsTitle" style="padding:0">Что внутри</span>
-        <div class="seg" id="segArchiveView">
-          <label><input type="radio" name="archview" value="list" checked><span>Списком</span></label>
-          <label><input type="radio" name="archview" value="grid"><span>Плиткой</span></label>
-        </div>
-      </div>
       <div class="group" id="archiveRows"></div>
+      <p class="hint">Нажмите на снимок — откроется само сообщение в Telegram, там он в полном размере. Картинки программа сюда не тянет, чтобы не упереться в ограничения Telegram на число запросов.</p>
       <div class="btn-row" id="archiveMoreRow" hidden>
         <button class="btn" id="archiveMore">Показать ещё 100</button>
         <span class="hint" style="margin:0" id="archiveCounter"></span>
