@@ -418,7 +418,7 @@ function stepLinks(panes) {
     const mine = btn.closest('.pane')?.id.replace('pane-', '');
     row.hidden = mine !== last || panes.includes(btn.dataset.go);
     if (row.hidden) continue;
-    const label = TAB_OF.get(btn.dataset.go)?.label;
+    const label = tabOf(btn.dataset.go)?.label;
     if (!label) continue;
     // Если вкладка в другом хранилище, одного её имени мало: «настройки» —
     // это настройки чего? Называем хранилище, чтобы не гадали
@@ -437,7 +437,7 @@ function show(pane) {
 
   // Вкладка может показывать несколько страниц подряд: «выбрать папки»
   // и «отправить» — один разговор, разрывать его вкладкой незачем
-  const panes = TAB_OF.get(pane)?.panes ?? [pane];
+  const panes = tabOf(pane)?.panes ?? [pane];
   $$('.pane').forEach((p) => {
     const id = p.id.replace('pane-', '');
     const on = panes.includes(id);
@@ -493,7 +493,7 @@ const APPS = [
     tabs: [
       { panes: ['drive'], label: 'Файлы' },
       { panes: ['access'], label: 'Доступ' },
-      { panes: ['sync'], label: 'Настройки' },
+      { panes: ['drive-prefs', 'sync'], label: 'Настройки' },
     ],
     ready: () => Boolean(state?.settings.driveChatId || state?.settings.chatId),
     stat: () => (home?.drive?.files ? `${home.drive.files} файлов · ${humanSize(home.drive.bytes)}` : 'Пусто — перетащите файлы'),
@@ -531,14 +531,12 @@ const SECTIONS = APPS;
 
 const SHARED_PANES = new Set(['access', 'sync']);
 
-// По странице находим и раздел, которому она принадлежит, и вкладку,
-// которая её показывает: одна вкладка может показывать несколько страниц
+// Какому разделу принадлежит страница. Общие — «Доступ» и «Общий список» —
+// не принадлежат никому: их показывает то хранилище, что открыто сейчас
 const PANE_OWNER = new Map();
-const TAB_OF = new Map();
 for (const app of SECTIONS) {
   for (const tab of app.tabs) {
     for (const pane of tab.panes) {
-      TAB_OF.set(pane, tab);
       if (!SHARED_PANES.has(pane)) PANE_OWNER.set(pane, app.id);
     }
   }
@@ -547,6 +545,26 @@ for (const app of SECTIONS) {
 let openStorage = 'drive';
 
 const storageById = (id) => SECTIONS.find((a) => a.id === id);
+
+/**
+ * Вкладка, которая показывает эту страницу.
+ *
+ * Одной карты «страница → вкладка» тут мало, и это стоило неприятного бага:
+ * «Доступ» и «Общий список» есть у обоих хранилищ, карта хранила ту вкладку,
+ * что записана последней, и диск по «Настройкам» открывал настройки
+ * фотоархива — «куда складывать снимки» под заголовком «Диск». Поэтому
+ * спрашиваем всегда у конкретного хранилища, начиная с открытого.
+ */
+function tabOf(pane, appId = openStorage) {
+  const own = storageById(appId)?.tabs.find((t) => t.panes.includes(pane));
+  if (own) return own;
+  // Страница не из этого хранилища — значит, идём к тому, чья она
+  for (const app of SECTIONS) {
+    const tab = app.tabs.find((t) => t.panes.includes(pane));
+    if (tab) return tab;
+  }
+  return null;
+}
 
 /** Чат открытого сейчас хранилища — по нему спрашиваем и раздаём доступ. */
 function activeStorageChat() {
@@ -576,7 +594,7 @@ function renderStorageHead(pane) {
 
   const tabs = $('#storageTabs');
   tabs.innerHTML = '';
-  const here = TAB_OF.get(pane);
+  const here = tabOf(pane, owner);
   for (const tab of app.tabs) {
     const btn = document.createElement('button');
     btn.textContent = tab.label;

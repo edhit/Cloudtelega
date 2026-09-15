@@ -703,11 +703,22 @@
                вместе с файлами он отдаёт и их путь внутри неё -->
           <input type="file" id="driveDirInput" webkitdirectory directory multiple hidden>
         </div>
+      </div>
+    </section>
+
+    <!-- ── Как устроен диск: своя страница настроек, не общая ────────────
+         Общую («Общий список») показывают оба хранилища, и настройка
+         про папки диска вылезла бы в фотоархиве, где её включать нечему -->
+    <section class="pane" id="pane-drive-prefs">
+      <h1>Как устроен диск</h1>
+      <p class="lead">Одна настройка: показывать ли папки диска в самом Telegram.</p>
+
+      <div class="group">
         <div class="row">
           <span class="row-glyph green">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.4l1.8 2h6.4a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2V7.4Z"/></svg>
           </span>
-          <div class="row-label"><b>Папки — темами в чате</b><small>Папка на диске видна в Telegram как отдельная тема</small></div>
+          <div class="row-label"><b>Папки — темами в чате</b><small>Папка на диске видна в Telegram как отдельная тема. Без этого папки остаются только в программе, а в чате идёт одна общая лента</small></div>
           <label class="switch"><input type="checkbox" id="driveFolders" checked><span></span></label>
         </div>
       </div>
