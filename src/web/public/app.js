@@ -762,7 +762,6 @@ async function loadHome() {
     <div class="stat"><b>${(home?.photos?.n ?? 0) + (home?.drive?.files ?? 0)}</b><small>файлов под присмотром</small></div>`;
 
   renderSetupList();
-  renderVersion();
 }
 
 /**
@@ -1203,6 +1202,9 @@ async function refresh() {
   $('#keepHeic').checked = s.keepHeicOriginal;
 
   applyStyle(state.style);
+  // Версию рисуем здесь, а не на главной: на свежей установке человек
+  // сразу попадает на вводный экран, и в меню было пусто
+  renderVersion();
   paths = [...s.scanPaths];
   renderPaths();
 
