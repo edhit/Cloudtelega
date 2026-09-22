@@ -406,27 +406,78 @@ const PANE_LOAD = {
 };
 
 /**
- * Кнопки «Дальше» остались от пошаговой настройки. Теперь шаг — это вкладка,
- * поэтому «дальше» имеет смысл ровно один раз и ровно внизу страницы: посреди
- * неё такая кнопка звала бы туда, что и так на виду, или уводила с полпути.
- * Оставшуюся подписываем именем вкладки — человек должен видеть, куда идёт.
+ * Порядок первой настройки — один список на всю программу. По нему и список
+ * дел на главной, и кнопка «Дальше» внизу страницы: раньше «дальше» были
+ * разбросаны по страницам, и после перегруппировки во вкладки цепочка
+ * порвалась — с настроек фотоархива не вело никуда.
+ */
+const SETUP = [
+  {
+    pane: 'bot',
+    title: 'Бот',
+    about: 'От его имени уходят файлы',
+    go: 'Подключить',
+    done: () => Boolean(state?.settings.botTokenSet),
+    what: () => (state?.bot?.running ? 'подключён, на связи' : 'подключён'),
+  },
+  {
+    pane: 'chat',
+    title: 'Куда складывать снимки',
+    about: 'Приватная группа в Telegram — ваш архив',
+    go: 'Выбрать',
+    done: () => Boolean(state?.settings.chatId),
+    // Пустое название — не «нет названия», а «не успели узнать»: ?? тут
+    // не спасает, пустая строка пройдёт мимо него
+    what: () => state?.settings.chats?.[String(state.settings.chatId)]?.title || 'группа выбрана',
+  },
+  {
+    pane: 'folders',
+    title: 'Откуда брать файлы',
+    about: 'Папки с фото на этом компьютере или на телефоне',
+    go: 'Указать',
+    done: () => (state?.settings.scanPaths?.length ?? 0) > 0,
+    what: () => {
+      const n = state.settings.scanPaths.length;
+      return `${n} ${plural(n, 'папка', 'папки', 'папок')}`;
+    },
+  },
+  {
+    pane: 'account',
+    title: 'Вход в аккаунт',
+    about: 'Нужен только для файлов больше 50 МБ',
+    go: 'Войти',
+    optional: true,
+    done: () => Boolean(state?.settings.sessionSet),
+    what: () => 'вход выполнен',
+  },
+];
+
+/** Первый невыполненный шаг — на него и зовём. */
+const nextStep = () => SETUP.find((step) => !step.done());
+
+/**
+ * Кнопка «Дальше» внизу страницы — пока настройка не закончена. Потом это
+ * просто мусор: человек ходит по вкладкам сам, и звать его некуда.
  */
 function stepLinks(panes) {
-  const last = panes[panes.length - 1];
-  for (const btn of $$('.pane .btn-row [data-go]')) {
-    const row = btn.closest('.btn-row');
-    const mine = btn.closest('.pane')?.id.replace('pane-', '');
-    row.hidden = mine !== last || panes.includes(btn.dataset.go);
-    if (row.hidden) continue;
-    const label = tabOf(btn.dataset.go)?.label;
-    if (!label) continue;
-    // Если вкладка в другом хранилище, одного её имени мало: «настройки» —
-    // это настройки чего? Называем хранилище, чтобы не гадали
-    const to = PANE_OWNER.get(btn.dataset.go);
-    const from = PANE_OWNER.get(mine);
-    const title = to && to !== from ? SECTIONS.find((sec) => sec.id === to)?.title : null;
-    btn.textContent = title ? `Дальше: ${title} · ${label} →` : `Дальше: ${label.toLowerCase()} →`;
-  }
+  const row = $('#stepNext');
+  const here = SETUP.findIndex((step) => panes.includes(step.pane));
+  const next = here < 0 ? null : SETUP.slice(here + 1).find((step) => !step.done());
+
+  // Зовём дальше только когда с этим шагом покончено: торопить человека
+  // с недоделанного шага — значит гонять его туда-обратно
+  const ready = here >= 0 && SETUP[here].done();
+  row.hidden = !next || !ready || !SETUP.some((step) => !step.done() && !step.optional);
+  if (row.hidden) return;
+
+  // «Настройки» — это настройки чего? Если шаг в другом разделе, называем его
+  const to = PANE_OWNER.get(next.pane);
+  const app = to ? SECTIONS.find((sec) => sec.id === to) : null;
+  const tab = tabOf(next.pane, to ?? openStorage);
+  $('#stepNextBtn').textContent = app && to !== PANE_OWNER.get(panes[0])
+    ? `Дальше: ${app.title} · ${tab?.label ?? next.title} →`
+    : `Дальше: ${next.title.toLowerCase()} →`;
+  $('#stepNextBtn').onclick = () => show(next.pane);
 }
 
 function show(pane) {
@@ -577,6 +628,9 @@ function renderStorageHead(pane) {
   const head = $('#storageHead');
   if (!owner) {
     head.hidden = true;
+    // Полосу чистим, а не просто прячем: иначе на «Боте» в ней продолжают
+    // висеть вкладки фотоархива — невидимые, но живые
+    $('#storageTabs').innerHTML = '';
     return;
   }
 
@@ -707,13 +761,61 @@ async function loadHome() {
     <div class="stat"><b>${humanSize(total)}</b><small>всего в Telegram — место не ограничено</small></div>
     <div class="stat"><b>${(home?.photos?.n ?? 0) + (home?.drive?.files ?? 0)}</b><small>файлов под присмотром</small></div>`;
 
-  // Чего не хватает до полноценной работы
-  const missing = [];
-  if (!state?.settings.botTokenSet) missing.push('бот');
-  if (!state?.settings.chatId) missing.push('чат для снимков');
-  if (!state?.settings.sessionSet) missing.push('вход в аккаунт (для файлов больше 50 МБ)');
-  $('#homeSetup').hidden = !missing.length;
-  $('#homeSetupText').textContent = missing.length ? `Осталось подключить: ${missing.join(', ')}.` : '';
+  renderSetupList();
+}
+
+/**
+ * Что осталось настроить — списком, где у каждого шага своя кнопка.
+ * Раньше тут была одна строка «осталось подключить: бот, чат…» и одна
+ * кнопка: сделал шаг — возвращайся сюда и гадай, какой следующий.
+ */
+function renderSetupList() {
+  const left = SETUP.filter((step) => !step.done());
+  const need = left.filter((step) => !step.optional);
+  $('#homeSetup').hidden = !left.length;
+  if (!left.length) return;
+
+  $('#homeSetupTitle').textContent = need.length
+    ? `Осталось настроить: ${need.length} ${plural(need.length, 'шаг', 'шага', 'шагов')}`
+    : 'Можно настроить ещё';
+
+  const box = $('#homeSetupList');
+  box.innerHTML = '';
+  for (const step of SETUP) {
+    const done = step.done();
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const glyph = document.createElement('span');
+    glyph.className = `row-glyph ${done ? 'green' : 'blue'}`;
+    glyph.innerHTML = done
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 12.4 3.6 3.6 7.4-7.8"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.6"/></svg>';
+
+    const label = document.createElement('div');
+    label.className = 'row-label';
+    const b = document.createElement('b');
+    b.textContent = step.title;
+    const small = document.createElement('small');
+    // Сделанный шаг говорит, чем он кончился; несделанный — зачем он нужен
+    small.textContent = done ? step.what() : step.about + (step.optional ? ' · можно позже' : '');
+    label.append(b, small);
+    row.append(glyph, label);
+
+    if (done) {
+      const pill = document.createElement('span');
+      pill.className = 'pill ok';
+      pill.textContent = 'готово';
+      row.append(pill);
+    } else {
+      const go = document.createElement('button');
+      go.className = `btn ${step === nextStep() ? 'btn-primary' : ''}`;
+      go.textContent = step.go;
+      go.addEventListener('click', () => show(step.pane));
+      row.append(go);
+    }
+    box.append(row);
+  }
 }
 
 function renderAppTiles() {
@@ -740,9 +842,6 @@ function renderAppTiles() {
   }
 }
 
-$('#homeSetupGo').addEventListener('click', () => {
-  show(!state?.settings.botTokenSet ? 'bot' : !state?.settings.chatId ? 'chat' : 'account');
-});
 
 
 

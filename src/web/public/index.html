@@ -118,10 +118,12 @@
         <div class="home-avatar profile-avatar big" id="homeAvatar"></div>
       </div>
 
-      <div class="note orange" id="homeSetup" hidden>
-        <b>Не всё настроено</b>
-        <span id="homeSetupText"></span>
-        <div class="btn-row"><button class="btn btn-primary" id="homeSetupGo">Продолжить настройку</button></div>
+      <!-- Список дел вместо одной строчки «осталось подключить»: раньше
+           после каждого шага приходилось возвращаться сюда и гадать,
+           что дальше, — теперь видно всё сразу и каждый шаг со своей кнопкой -->
+      <div id="homeSetup" hidden>
+        <div class="group-title" id="homeSetupTitle">Осталось настроить</div>
+        <div class="group" id="homeSetupList"></div>
       </div>
 
       <div class="apps" id="appTiles"></div>
@@ -224,7 +226,6 @@
         </div>
       </div>
 
-      <div class="btn-row"><button class="btn" data-go="account">Дальше: ваш аккаунт →</button></div>
     </section>
 
     <!-- ── Куда складывать ───────────────────────────────────────────── -->
@@ -302,7 +303,6 @@
       <div class="btn-row">
         <span id="chatStatus" class="pill">не проверено</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="folders">Дальше: что отправлять →</button></div>
     </section>
 
     <!-- ── 4. Аккаунт ────────────────────────────────────────────────── -->
@@ -366,7 +366,6 @@
       </div>
 
       <p class="hint">Можно пропустить — тогда крупные видео отправляться не будут, а группу для хранения придётся создать руками.</p>
-      <div class="btn-row"><button class="btn" data-go="chat">Дальше: куда складывать →</button></div>
     </section>
 
     <!-- ── 5. Папки ──────────────────────────────────────────────────── -->
@@ -393,7 +392,6 @@
         <span id="pathStatus" class="pill">папки не выбраны</span>
         <span class="hint" style="margin:0">Сохраняется само, как в системных настройках</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="prefs">Дальше: как отправлять →</button></div>
     </section>
 
     <!-- ── 6. Настройки отправки ─────────────────────────────────────── -->
@@ -452,7 +450,6 @@
       <div class="btn-row">
         <span id="prefsStatus" class="pill">сохраняется автоматически</span>
       </div>
-      <div class="btn-row"><button class="btn" data-go="finish">Дальше →</button></div>
     </section>
 
     <!-- ── 7. Готово ─────────────────────────────────────────────────── -->
@@ -865,6 +862,12 @@
 
       <div class="btn-row"><button class="btn" id="refreshArchive">Обновить</button></div>
     </section>
+
+    <!-- Одна кнопка «дальше» на всю программу: она знает порядок настройки
+         и показывается, только пока настройка не закончена -->
+    <div class="btn-row" id="stepNext" hidden>
+      <button class="btn" id="stepNextBtn">Дальше</button>
+    </div>
 
   </main>
 </div>
