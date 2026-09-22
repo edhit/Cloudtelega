@@ -731,6 +731,8 @@ a { color: var(--accent); }
   margin: 0 -6px; padding: 0 6px;
 }
 
+.sidebar-foot .version { margin-top: 8px; opacity: 0.75; }
+
 .danger-zone { border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
 
 /* ── плитка миниатюр ─────────────────────────────────────────────────────── */

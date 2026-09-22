@@ -762,6 +762,7 @@ async function loadHome() {
     <div class="stat"><b>${(home?.photos?.n ?? 0) + (home?.drive?.files ?? 0)}</b><small>файлов под присмотром</small></div>`;
 
   renderSetupList();
+  renderVersion();
 }
 
 /**
@@ -769,6 +770,12 @@ async function loadHome() {
  * Раньше тут была одна строка «осталось подключить: бот, чат…» и одна
  * кнопка: сделал шаг — возвращайся сюда и гадай, какой следующий.
  */
+/** Версия — мелко внизу меню: назвать её проще, чем искать в файлах. */
+function renderVersion() {
+  const box = $('#appVersion');
+  if (box) box.textContent = state?.version ? `Версия ${state.version}` : '';
+}
+
 function renderSetupList() {
   const left = SETUP.filter((step) => !step.done());
   const need = left.filter((step) => !step.optional);

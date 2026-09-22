@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -601,6 +602,7 @@ async function buildState() {
       driveFolders: config.driveFolders,
       driveDownloadDir: config.driveDownloadDir,
     },
+    version: appVersion(),
     checks: { bot: null, chat: null, account: null },
     job: { ...job, running: Boolean(job.mode), send: sendState() },
     bot: botState(),
@@ -1619,6 +1621,19 @@ function readBody(req) {
   });
 }
 
+/** Версия программы — из package.json, чтобы не держать её в двух местах. */
+let versionCache = null;
+function appVersion() {
+  if (versionCache !== null) return versionCache;
+  try {
+    const file = fileURLToPath(new URL('../../package.json', import.meta.url));
+    versionCache = JSON.parse(readFileSync(file, 'utf8')).version ?? '';
+  } catch {
+    versionCache = '';
+  }
+  return versionCache;
+}
+
 export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = {}) {
   const token = crypto.randomBytes(12).toString('hex');
 
@@ -1705,10 +1720,24 @@ export async function runWeb({ port = 8787, host = '127.0.0.1', open = true } = 
     }
   });
 
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, resolve);
-  });
+  // Порт бывает занят — другой копией программы или чем-то посторонним.
+  // Человеку, который просто щёлкнул по значку, «EADDRINUSE» не говорит
+  // ничего, поэтому молча берём следующий свободный и пишем, какой взяли
+  const first = port;
+  for (let tries = 0; ; tries += 1) {
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, host, resolve);
+      });
+      break;
+    } catch (err) {
+      server.removeAllListeners('error');
+      if (err?.code !== 'EADDRINUSE' || tries >= 20) throw err;
+      port += 1;
+    }
+  }
+  if (port !== first) log.info(`Порт ${first} занят — программа открылась на ${port}`);
 
   const link = `http://${host}:${port}/?token=${token}`;
   log.ok(`Мастер настройки запущен. Профиль: ${config.profile}`);
